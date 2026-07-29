@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#08080B">
 <title>Now Playing</title>
+<!-- Inline so the page stays a single self-contained file with no second request. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E">
 <style>
   /* ---------------------------------------------------------------
      Tokens. --accent / --glow-a / --glow-b are overwritten at runtime
@@ -431,9 +433,12 @@
     return Math.round(h / 24) + ' 天前';
   }
 
-  function paintIdle(reason) {
+  // The small label is the signal state, the headline is the sentence a
+  // reader actually wants — so they must not both say the same thing, and
+  // the label must never say "暂停" when nothing is playing at all.
+  function paintIdle(label, reason) {
     el.np.setAttribute('data-state', 'idle');
-    el.status.textContent = '暂停中';
+    el.status.textContent = label;
     el.title.textContent = reason;
     el.artist.textContent = '';
     el.album.textContent = '';
@@ -479,13 +484,15 @@
 
   // 换歌时做一次淡出淡入；只是刷新时间戳就原地更新，避免整页闪一下。
   function render(d) {
-    var key = d && d.title ? d.state + '|' + d.artist + '|' + d.title : 'idle';
+    var key = d && d.title ? d.state + '|' + d.artist + '|' + d.title
+            : d && d.offline ? 'offline' : 'idle';
     var isNew = key !== shownKey;
     shownKey = key;
 
     var paint = function () {
       if (!d || !d.title) {
-        paintIdle(d && d.offline ? '这台电脑现在不在线' : '现在没在听歌');
+        if (d && d.offline) paintIdle('离线', '这台电脑现在不在线');
+        else paintIdle('空闲', '现在没在听歌');
       } else {
         paintTrack(d);
       }
