@@ -2,34 +2,554 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#08080B">
 <title>Now Playing</title>
 <style>
+  /* ---------------------------------------------------------------
+     Tokens. --accent / --glow-a / --glow-b are overwritten at runtime
+     from the album artwork, so the whole page recolors per song.
+     The values here are the fallback used before art loads (and when
+     nothing is playing).
+     --------------------------------------------------------------- */
+  :root {
+    --ground:      #08080B;
+    --ground-lift: #131318;
+    --text:        #F4F1EC;
+    --text-dim:    #8E8E9A;
+    --text-faint:  #55555F;
+    --accent:      #6E7BC4;
+    --glow-a:      #1B1B26;
+    --glow-b:      #08080B;
+
+    --sleeve: clamp(184px, 32vw, 328px);
+
+    --font-display: ui-serif, "New York", "Iowan Old Style", "Songti SC", Georgia, serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+                 "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  }
+
+  /* A now-playing display is a dark-room object — the vernacular of
+     every full-screen player, car dash and hi-fi front panel. This page
+     commits to that one world rather than shipping a washed-out light
+     twin of it. */
+
+  * { box-sizing: border-box; }
+
   html, body {
     height: 100%;
     margin: 0;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* --- ambient layers ------------------------------------------- */
+
+  .stage {
+    position: relative;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    padding: max(1.5rem, env(safe-area-inset-top)) 1.5rem max(1.5rem, env(safe-area-inset-bottom));
+  }
+
+  .wash {
+    position: absolute;
+    inset: -25%;
+    background-size: cover;
+    background-position: center;
+    filter: blur(90px) saturate(1.8);
+    opacity: 0;
+    transform: scale(1.15);
+    transition: opacity 1.2s ease, background-image 0s;
+    will-change: opacity;
+  }
+  .wash.lit { opacity: .55; }
+
+  /* Slow ambient drift — the glow breathes rather than sitting flat. */
+  @media (prefers-reduced-motion: no-preference) {
+    .wash.lit { animation: drift 24s ease-in-out infinite alternate; }
+  }
+  @keyframes drift {
+    from { transform: scale(1.12) translate3d(-1.5%, -1%, 0); }
+    to   { transform: scale(1.22) translate3d(1.5%, 1.5%, 0); }
+  }
+
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(120% 90% at 50% 25%, transparent 0%, var(--ground) 78%),
+      linear-gradient(to bottom, color-mix(in srgb, var(--ground) 55%, transparent), var(--ground));
+    pointer-events: none;
+  }
+
+  /* --- the composition ------------------------------------------ */
+
+  .np {
+    position: relative;
+    display: grid;
+    gap: clamp(1.75rem, 4vw, 3.25rem);
+    align-items: center;
+    justify-items: center;
+    width: 100%;
+    max-width: 60rem;
+    text-align: center;
+    opacity: 1;
+    transition: opacity .45s ease;
+  }
+  .np.swapping { opacity: 0; }
+
+  @media (min-width: 720px) {
+    .np {
+      grid-template-columns: auto minmax(0, 1fr);
+      justify-items: start;
+      text-align: left;
+    }
+  }
+
+  /* --- sleeve ---------------------------------------------------- */
+
+  .sleeve {
+    position: relative;
+    margin: 0;
+    width: var(--sleeve);
+    aspect-ratio: 1;
+    /* Tight radius: a record sleeve has a corner, not a pill. */
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--ground-lift);
+    box-shadow:
+      0 2px 4px rgba(0,0,0,.5),
+      0 18px 44px rgba(0,0,0,.55),
+      0 44px 92px rgba(0,0,0,.42),
+      inset 0 0 0 1px rgba(255,255,255,.06);
+    flex: none;
+  }
+  .sleeve img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity .5s ease;
+  }
+  .sleeve img.shown { opacity: 1; }
+
+  .sleeve-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 2.6rem;
+    color: var(--text-faint);
+    letter-spacing: .1em;
+  }
+  .sleeve:has(img.shown) .sleeve-empty { display: none; }
+
+  /* --- liner notes ----------------------------------------------- */
+
+  .notes {
+    display: grid;
+    gap: .55rem;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .status {
     display: flex;
     align-items: center;
+    gap: .6rem;
     justify-content: center;
-    background: #0f0f12;
-    color: #eaeaea;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    text-align: center;
+    margin: 0 0 .35rem;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    transition: color .6s ease;
   }
-  .card {
-    padding: 2.5rem 3rem;
-    border-radius: 16px;
-    background: #1a1a1f;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  @media (min-width: 720px) {
+    .status { justify-content: flex-start; }
   }
-  .emoji { font-size: 2.5rem; margin-bottom: 0.5rem; }
-  .msg { font-size: 1.1rem; color: #a0a0a8; }
+
+  /* Equalizer: the one motif every now-playing display shares.
+     Kept hairline-thin so it reads as a signal, not an ornament. */
+  .eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 11px;
+  }
+  .eq i {
+    width: 2px;
+    height: 30%;
+    background: currentColor;
+    border-radius: 1px;
+    transform-origin: bottom;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    [data-state="playing"] .eq i { animation: bounce .9s ease-in-out infinite; }
+    [data-state="playing"] .eq i:nth-child(2) { animation-duration: .68s; animation-delay: -.25s; }
+    [data-state="playing"] .eq i:nth-child(3) { animation-duration: 1.05s; animation-delay: -.5s; }
+    [data-state="playing"] .eq i:nth-child(4) { animation-duration: .8s;  animation-delay: -.15s; }
+  }
+  @keyframes bounce {
+    0%, 100% { height: 25%; }
+    50%      { height: 100%; }
+  }
+  /* Paused / stopped: bars settle flat — the display goes quiet. */
+  [data-state="paused"] .eq i,
+  [data-state="idle"] .eq i { height: 22%; opacity: .55; }
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(1.75rem, 4.6vw, 3.15rem);
+    line-height: 1.12;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .artist {
+    margin: 0;
+    font-size: clamp(1rem, 2vw, 1.28rem);
+    font-weight: 500;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .album {
+    margin: 0;
+    font-size: .92rem;
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+  }
+
+  .stamp {
+    margin: .85rem 0 0;
+    font-size: .72rem;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+  }
+
+  /* --- idle state ------------------------------------------------ */
+
+  [data-state="idle"] .sleeve { box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); }
+  [data-state="idle"] h1 {
+    font-size: clamp(1.4rem, 3.4vw, 2.1rem);
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  /* --- footer ---------------------------------------------------- */
+
+  .sig {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: max(1.1rem, env(safe-area-inset-bottom));
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
 </style>
 </head>
 <body>
-  <div class="card">
-    <div class="emoji">🎵</div>
-    <div class="msg">这是一个飞书链接预览用的占位页。</div>
+  <div class="stage">
+    <div class="wash" id="wash" aria-hidden="true"></div>
+    <div class="scrim" aria-hidden="true"></div>
+
+    <main class="np" id="np" data-state="idle" aria-live="polite">
+      <figure class="sleeve">
+        <img id="cover" alt="" crossorigin="anonymous">
+        <div class="sleeve-empty" aria-hidden="true">♪</div>
+      </figure>
+
+      <div class="notes">
+        <p class="status">
+          <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span id="status-text">连接中</span>
+        </p>
+        <h1 id="title">…</h1>
+        <p class="artist" id="artist"></p>
+        <p class="album" id="album"></p>
+        <p class="stamp" id="stamp"></p>
+      </div>
+    </main>
+
+    <p class="sig">Apple Music · 石泽</p>
   </div>
+
+<script>
+(function () {
+  'use strict';
+
+  // 数据源：本机常驻程序把当前播放状态推到这里，本页每隔几秒拉一次。
+  // 换数据源只改这一行。
+  var API = 'https://nowplaying-relay.shize-879.workers.dev/now';
+
+  var POLL_MS = 3000;
+  // 超过这个时长没有新上报，就认为对面的电脑关机/断网了，不再把
+  // 陈旧的歌当成"正在听"展示——否则同事看到的可能是几小时前的歌。
+  // 本机程序每 60 秒兜底心跳一次，所以这个阈值必须显著大于 60 秒。
+  var STALE_MS = 3 * 60 * 1000;
+
+  var el = {
+    np: document.getElementById('np'),
+    wash: document.getElementById('wash'),
+    cover: document.getElementById('cover'),
+    title: document.getElementById('title'),
+    artist: document.getElementById('artist'),
+    album: document.getElementById('album'),
+    status: document.getElementById('status-text'),
+    stamp: document.getElementById('stamp'),
+    themeColor: document.querySelector('meta[name="theme-color"]')
+  };
+
+  var shownKey = null;   // 当前画面上是哪首歌，用来判断要不要做淡出淡入
+  var lastData = null;
+  var fetchedAt = 0;     // 上次取到数据的本机时刻，用来让"更新于 X 前"自己走秒
+  var timer = null;
+
+  /* ---------- 从封面里取主色 ---------- */
+
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var h = 0, s = 0, l = (max + min) / 2;
+    var d = max - min;
+    if (d) {
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else                h = ((r - g) / d + 4) / 6;
+    }
+    return [h * 360, s, l];
+  }
+
+  function hsl(h, s, l) {
+    return 'hsl(' + h.toFixed(0) + ' ' + (s * 100).toFixed(0) + '% ' + (l * 100).toFixed(0) + '%)';
+  }
+
+  // 把封面缩到 40x40 后按颜色分桶统计，挑一个"够鲜艳又够常见"的做主色。
+  // 纯黑纯白的桶直接跳过，否则大部分封面都会选出灰色。
+  function readPalette(img) {
+    var N = 40, cv = document.createElement('canvas');
+    cv.width = cv.height = N;
+    var ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, N, N);
+
+    var px;
+    try {
+      px = ctx.getImageData(0, 0, N, N).data;
+    } catch (e) {
+      return null;   // 跨域受限拿不到像素，安静降级用默认色
+    }
+
+    var buckets = {};
+    for (var i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < 200) continue;
+      var r = px[i], g = px[i + 1], b = px[i + 2];
+      var k = (r >> 4) + ',' + (g >> 4) + ',' + (b >> 4);
+      var e = buckets[k] || (buckets[k] = { r: 0, g: 0, b: 0, n: 0 });
+      e.r += r; e.g += g; e.b += b; e.n++;
+    }
+
+    var best = null, bestScore = -1, biggest = null, biggestN = -1;
+    for (var key in buckets) {
+      var q = buckets[key];
+      var cr = q.r / q.n, cg = q.g / q.n, cb = q.b / q.n;
+      var c = rgbToHsl(cr, cg, cb);
+      if (q.n > biggestN) { biggestN = q.n; biggest = c; }
+      if (c[2] < 0.12 || c[2] > 0.9) continue;   // 太黑或太白，跳过
+      var score = Math.sqrt(q.n) * (c[1] + 0.12);
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+
+    if (!best) best = biggest;
+    if (!best) return null;
+
+    return {
+      // 主色：压住饱和度上限、把亮度抬到深色底上能读清的区间
+      accent: hsl(best[0], Math.min(0.72, Math.max(0.42, best[1])), 0.68),
+      // 光晕：同色相压暗，作为背景氛围
+      glowA:  hsl(best[0], Math.min(0.5, best[1]), 0.16),
+      glowB:  hsl((best[0] + 28) % 360, Math.min(0.42, best[1] * 0.8), 0.08),
+      raw:    best
+    };
+  }
+
+  function applyPalette(p) {
+    var root = document.documentElement.style;
+    if (!p) {
+      root.removeProperty('--accent');
+      root.removeProperty('--glow-a');
+      root.removeProperty('--glow-b');
+      if (el.themeColor) el.themeColor.setAttribute('content', '#08080B');
+      return;
+    }
+    root.setProperty('--accent', p.accent);
+    root.setProperty('--glow-a', p.glowA);
+    root.setProperty('--glow-b', p.glowB);
+    if (el.themeColor) el.themeColor.setAttribute('content', p.glowB);
+  }
+
+  /* ---------- 渲染 ---------- */
+
+  // 中转站返回的是"这条记录多久之前推上来的"，而不是一个绝对时间戳——
+  // 所以这里既不受这台电脑的时钟影响，也不受播放那台电脑的时钟影响。
+  function currentAge() {
+    if (!lastData || typeof lastData.ageMs !== 'number') return null;
+    return lastData.ageMs + (Date.now() - fetchedAt);
+  }
+
+  function relTime(ageMs) {
+    var s = Math.max(0, Math.round(ageMs / 1000));
+    if (s < 10)   return '刚刚';
+    if (s < 60)   return s + ' 秒前';
+    var m = Math.round(s / 60);
+    if (m < 60)   return m + ' 分钟前';
+    var h = Math.round(m / 60);
+    if (h < 24)   return h + ' 小时前';
+    return Math.round(h / 24) + ' 天前';
+  }
+
+  function paintIdle(reason) {
+    el.np.setAttribute('data-state', 'idle');
+    el.status.textContent = '暂停中';
+    el.title.textContent = reason;
+    el.artist.textContent = '';
+    el.album.textContent = '';
+    el.stamp.textContent = '';
+    el.cover.classList.remove('shown');
+    el.cover.removeAttribute('src');
+    el.cover.alt = '';
+    el.wash.classList.remove('lit');
+    el.wash.style.backgroundImage = '';
+    applyPalette(null);
+  }
+
+  function paintTrack(d) {
+    el.np.setAttribute('data-state', d.state === 'paused' ? 'paused' : 'playing');
+    el.status.textContent = d.state === 'paused' ? '已暂停' : '正在播放';
+    el.title.textContent = d.title;
+    el.artist.textContent = d.artist || '';
+    el.album.textContent = d.album || '';
+    var age = currentAge();
+    el.stamp.textContent = age === null ? '' : '更新于 ' + relTime(age);
+
+    if (d.artwork) {
+      el.cover.alt = d.album ? d.album + ' 专辑封面' : '专辑封面';
+      el.cover.onload = function () {
+        el.cover.classList.add('shown');
+        el.wash.style.backgroundImage = 'url("' + d.artwork + '")';
+        el.wash.classList.add('lit');
+        applyPalette(readPalette(el.cover));
+      };
+      el.cover.onerror = function () {
+        el.cover.classList.remove('shown');
+        el.wash.classList.remove('lit');
+        applyPalette(null);
+      };
+      el.cover.src = d.artwork;
+    } else {
+      el.cover.classList.remove('shown');
+      el.cover.removeAttribute('src');
+      el.wash.classList.remove('lit');
+      applyPalette(null);
+    }
+  }
+
+  // 换歌时做一次淡出淡入；只是刷新时间戳就原地更新，避免整页闪一下。
+  function render(d) {
+    var key = d && d.title ? d.state + '|' + d.artist + '|' + d.title : 'idle';
+    var isNew = key !== shownKey;
+    shownKey = key;
+
+    var paint = function () {
+      if (!d || !d.title) {
+        paintIdle(d && d.offline ? '这台电脑现在不在线' : '现在没在听歌');
+      } else {
+        paintTrack(d);
+      }
+    };
+
+    if (!isNew) { paint(); return; }
+
+    el.np.classList.add('swapping');
+    setTimeout(function () {
+      paint();
+      el.np.classList.remove('swapping');
+    }, 260);
+  }
+
+  /* ---------- 取数 ---------- */
+
+  function normalize(raw) {
+    if (!raw || !raw.title || raw.state === 'stopped') return null;
+    if (typeof raw.ageMs === 'number' && raw.ageMs > STALE_MS) {
+      return { offline: true, ageMs: raw.ageMs };
+    }
+    return raw;
+  }
+
+  function poll() {
+    fetch(API, { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (raw) {
+        lastData = normalize(raw);
+        fetchedAt = Date.now();
+        render(lastData);
+      })
+      .catch(function () {
+        // 拉不到就保持上一次的画面，时间戳继续自己走——
+        // 一次网络抖动不该让整页变成"没在听歌"。
+        render(lastData);
+      });
+  }
+
+  function start() {
+    stop();
+    poll();
+    timer = setInterval(poll, POLL_MS);
+  }
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  // 页面切到后台就停止轮询，回到前台立刻拉一次
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stop();
+    else start();
+  });
+
+  start();
+
+  // 时间戳每 20 秒自己走一格，不用等下一次取数
+  setInterval(function () {
+    var age = currentAge();
+    if (age !== null && !document.hidden && el.np.getAttribute('data-state') !== 'idle') {
+      el.stamp.textContent = '更新于 ' + relTime(age);
+    }
+  }, 20000);
+})();
+</script>
 </body>
 </html>
