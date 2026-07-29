@@ -56,9 +56,23 @@
   .stage {
     position: relative;
     height: 100%;
+    /* Belt and braces: if `height: 100%` ever resolves short — a mobile
+       browser's collapsing toolbar, an odd root box — the stage still
+       covers the viewport, so no strip of it is left unpainted. */
+    min-height: 100dvh;
     display: grid;
     place-items: center;
     padding: max(1.5rem, env(safe-area-inset-top)) 1.5rem max(1.5rem, env(safe-area-inset-bottom));
+    /* Load-bearing, not tidiness: .wash deliberately overhangs this box by
+       25% on every side (blur needs room, or its edges fade to nothing),
+       while .scrim that darkens it is exactly stage-sized. Without a clip
+       here the only thing containing that overhang is the viewport — and
+       `overflow: hidden` on <body> does NOT clip, because the spec
+       propagates it to the viewport and leaves body itself visible. So any
+       moment the stage and viewport disagree, even mid-repaint after a
+       window resize, the undarkened overhang paints past the scrim as a
+       hard bright rectangle edge. Observed live. */
+    overflow: hidden;
   }
 
   .wash {
