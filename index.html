@@ -130,14 +130,25 @@
   .mesh-on .scrim {
     background:
       radial-gradient(120% 95% at 50% 32%,
-        color-mix(in srgb, var(--ground) 18%, transparent) 0%,
-        color-mix(in srgb, var(--ground) 62%, transparent) 55%,
-        color-mix(in srgb, var(--ground) 92%, transparent) 100%),
+        color-mix(in srgb, var(--ground) 40%, transparent) 0%,
+        color-mix(in srgb, var(--ground) 70%, transparent) 55%,
+        color-mix(in srgb, var(--ground) 94%, transparent) 100%),
       linear-gradient(to bottom,
-        color-mix(in srgb, var(--ground) 30%, transparent),
-        color-mix(in srgb, var(--ground) 20%, transparent) 45%,
-        color-mix(in srgb, var(--ground) 78%, transparent));
+        color-mix(in srgb, var(--ground) 42%, transparent),
+        color-mix(in srgb, var(--ground) 34%, transparent) 45%,
+        color-mix(in srgb, var(--ground) 82%, transparent));
   }
+
+  /* Contrast insurance for the text itself. A pale pool can drift under the
+     type at any moment — the mesh has no fixed light and dark regions the
+     way the old blurred cover did — and darkening the whole scrim enough to
+     cover the worst case would throw away the colour that is the point of
+     the mesh. A shadow costs the background nothing. */
+  .mesh-on .notes {
+    text-shadow: 0 1px 12px rgba(0, 0, 0, .55), 0 1px 3px rgba(0, 0, 0, .45);
+  }
+  .mesh-on .album { color: color-mix(in srgb, var(--text) 78%, var(--text-dim)); }
+  .mesh-on .stamp { color: color-mix(in srgb, var(--text) 55%, var(--text-faint)); }
 
   /* --- the composition ------------------------------------------ */
 
@@ -370,6 +381,7 @@ var Mesh = (function () {
   var COUNT = 5;                 // colour pools
   var MAX_EDGE = 720;            // longest canvas edge in device pixels
   var FRAME_MS = 1000 / 30;
+  var IDLE_FRAME_MS = 500;       // nothing playing: the field barely moves
   var BLEND_MS = 1400;           // colour crossfade when the song changes
 
   var VERT = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
@@ -425,10 +437,14 @@ var Mesh = (function () {
     '}'
   ].join('\n');
 
-  var gl, prog, loc = {}, canvas;
+  var gl, prog, loc = {}, canvas, onLost = null;
   var from = [], to = [], now = [], seeds = [];
   var blendStart = 0, running = false, raf = 0, lastDraw = 0, t0 = 0;
-  var reduced = false;
+  var reduced = false, idle = false, dead = false;
+  // The shader clock stops while the page is hidden. Without this, coming
+  // back to a tab left alone for an hour hands the shader an hour-older
+  // time value and every pool teleports to a new position in one frame.
+  var hiddenAt = 0;
 
   function compile(type, src) {
     var s = gl.createShader(type);
@@ -460,13 +476,26 @@ var Mesh = (function () {
 
   function draw(ts) {
     raf = 0;
-    if (!running) return;
-    if (ts - lastDraw >= FRAME_MS) {
+    if (!running || dead) return;
+
+    // Nothing playing is a near-black field whose motion nobody can see, so
+    // it doesn't deserve 30fps for however many hours the tab sits open.
+    var interval = idle ? IDLE_FRAME_MS : FRAME_MS;
+
+    if (ts - lastDraw >= interval) {
       lastDraw = ts;
       resize();
 
-      var k = blendStart ? Math.min(1, (ts - blendStart) / BLEND_MS) : 1;
-      k = k * k * (3 - 2 * k);                      // ease the colour change
+      var blending = blendStart !== 0;
+      var k = 1;
+      if (blending) {
+        k = Math.min(1, (ts - blendStart) / BLEND_MS);
+        // Clearing this when the fade lands is what lets the loop below
+        // decide it has nothing left to do. Leaving it set was keeping a
+        // reduced-motion page redrawing one unchanging frame forever.
+        if (k >= 1) blendStart = 0;
+        k = k * k * (3 - 2 * k);                    // ease the colour change
+      }
       for (var i = 0; i < COUNT; i++) {
         for (var c = 0; c < 3; c++) {
           now[i * 3 + c] = from[i * 3 + c] + (to[i * 3 + c] - from[i * 3 + c]) * k;
@@ -481,50 +510,102 @@ var Mesh = (function () {
       gl.uniform2fv(loc.seed, seeds);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
+
+    // Under reduced motion the only reason to keep going is an unfinished
+    // colour fade; once that lands there is nothing left to animate.
     if (!reduced || blendStart) raf = requestAnimationFrame(draw);
   }
 
   function kick() {
-    if (!running || raf) return;
+    if (!running || raf || dead) return;
     raf = requestAnimationFrame(draw);
+  }
+
+  // A lost context leaves every GL object invalid. Chrome fires this on GPU
+  // driver resets, on waking from sleep, and when it reclaims contexts from
+  // background tabs — none of them rare on a page meant to stay open. The
+  // default action is to make the loss permanent, so preventDefault() is
+  // what buys the chance to restore.
+  function handleLost(e) {
+    e.preventDefault();
+    dead = true;
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    if (onLost) onLost();
+  }
+
+  function handleRestored() {
+    dead = false;
+    if (!setup()) { if (onLost) onLost(); return; }
+    // Rebuild straight to the current colours: fading up from black would
+    // announce a failure the viewer never saw.
+    from.set(now);
+    to.set(now);
+    blendStart = 0;
+    if (onLost) onLost(true);
+    if (running) kick();
+  }
+
+  // Builds (or rebuilds, after a context loss) everything that lives on the
+  // GPU. Deliberately does not touch the colour arrays — those are CPU-side
+  // state the restore path needs to keep.
+  function setup() {
+    try {
+      gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false })
+        || canvas.getContext('experimental-webgl');
+    } catch (e) { gl = null; }
+    if (!gl) return false;
+
+    // Chrome answers "yes, WebGL works" even with no GPU, by quietly routing
+    // it to SwiftShader on the CPU. Accepting that would put a five-pow
+    // per-pixel shader on the processor for as long as the tab is open. The
+    // blurred-cover fallback is the better page on such a machine.
+    try {
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '') : '';
+      if (/swiftshader|llvmpipe|software|basic render/i.test(renderer)) return false;
+    } catch (e) { /* can't tell; assume real hardware */ }
+
+    try {
+      prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+    } catch (e) { return false; }
+
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 3, -1, -1, 3, -1, 3, 3, -1, 3, 3]), gl.STATIC_DRAW);
+    var a = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(a);
+    gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+
+    loc.res = gl.getUniformLocation(prog, 'uRes');
+    loc.time = gl.getUniformLocation(prog, 'uTime');
+    loc.col = gl.getUniformLocation(prog, 'uCol[0]');
+    loc.seed = gl.getUniformLocation(prog, 'uSeed[0]');
+    return true;
   }
 
   return {
     // Returns false when WebGL isn't usable, so the caller can leave the
-    // blurred-cover fallback in place.
-    init: function (el) {
+    // blurred-cover fallback in place. lostCb is called with no argument
+    // when the mesh dies and needs covering for, and with true when it
+    // comes back.
+    init: function (el, lostCb) {
       canvas = el;
-      try {
-        gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false })
-          || canvas.getContext('experimental-webgl');
-      } catch (e) { gl = null; }
-      if (!gl) return false;
-
-      try {
-        prog = gl.createProgram();
-        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-        gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
-      } catch (e) { return false; }
-
-      var buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER,
-        new Float32Array([-1, -1, 3, -1, -1, 3, -1, 3, 3, -1, 3, 3]), gl.STATIC_DRAW);
-      var a = gl.getAttribLocation(prog, 'p');
-      gl.enableVertexAttribArray(a);
-      gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
-
-      loc.res = gl.getUniformLocation(prog, 'uRes');
-      loc.time = gl.getUniformLocation(prog, 'uTime');
-      loc.col = gl.getUniformLocation(prog, 'uCol[0]');
-      loc.seed = gl.getUniformLocation(prog, 'uSeed[0]');
+      onLost = lostCb || null;
 
       from = new Float32Array(COUNT * 3);
       to = new Float32Array(COUNT * 3);
       now = new Float32Array(COUNT * 3);
       seeds = new Float32Array([].concat.apply([], defaultSeeds()));
+
+      if (!setup()) return false;
+
+      canvas.addEventListener('webglcontextlost', handleLost, false);
+      canvas.addEventListener('webglcontextrestored', handleRestored, false);
 
       reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       t0 = performance.now();
@@ -546,19 +627,32 @@ var Mesh = (function () {
       kick();
     },
 
+    // Slows the loop right down while nothing is playing. The idle field is
+    // near-black and barely moves; rendering it 30 times a second all night
+    // buys nothing anyone can see.
+    setIdle: function (v) {
+      if (idle === !!v) return;
+      idle = !!v;
+      kick();
+    },
+
     start: function () {
       if (!gl || running) return;
       running = true;
+      // Resume the shader clock where it stopped rather than where wall
+      // time got to, so the pools carry on from where they were.
+      if (hiddenAt) { t0 += performance.now() - hiddenAt; hiddenAt = 0; }
       lastDraw = 0;
       kick();
     },
 
     stop: function () {
+      if (running && !hiddenAt) hiddenAt = performance.now();
       running = false;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
     },
 
-    available: function () { return !!gl; }
+    available: function () { return !!gl && !dead; }
   };
 })();
 
@@ -590,6 +684,7 @@ var Mesh = (function () {
   };
 
   var shownKey = null;   // 当前画面上是哪首歌，用来判断要不要做淡出淡入
+  var shownArt = null;   // 当前画面上是哪张封面，避免同一张反复重新解码取色
   var lastData = null;
   var fetchedAt = 0;     // 上次取到数据的本机时刻，用来让"更新于 X 前"自己走秒
   var timer = null;
@@ -697,24 +792,49 @@ var Mesh = (function () {
     });
     // Still short (a cover with only one or two usable buckets): fan out
     // from what we have rather than repeating one colour five times.
+    // Cycling is over the genuine picks only — modulo the growing array
+    // would always come back to index 0 and quietly throw away the second
+    // colour of a two-tone cover.
+    // Fanned alternately either side of the source hue in small steps, not
+    // marched in one direction: a single-hue cover padded by +24° four times
+    // ends up with green pools on a red sleeve. Staying within about ±32°
+    // keeps the invented colours in the same family as the real one.
+    var genuine = picked.length;
     while (picked.length < 5) {
-      var src = picked[picked.length % Math.max(1, picked.length)] || best;
-      picked.push([src[0] + 24 * picked.length, src[1] * 0.85, src[2]]);
+      var n = picked.length - genuine;
+      var src = genuine ? picked[picked.length % genuine] : best;
+      picked.push([
+        src[0] + (n % 2 ? -1 : 1) * 16 * Math.ceil((n + 1) / 2),
+        src[1] * 0.85,
+        src[2]
+      ]);
     }
+
+    // A greyscale cover has no hue to speak of — every bucket lands near
+    // hue 0 with no saturation. Forcing a saturation floor on that invents
+    // colour the cover doesn't have, and because the fan-out above steps
+    // hue by 24° it invents the *same* red-orange-yellow-green every time,
+    // on every black-and-white sleeve. Better to stay grey.
+    var chromatic = picked.slice(0, 5).some(function (c) { return c[1] > 0.10; });
 
     // Depth: alternate lighter and darker pools so the field reads as
     // volume rather than as one evenly-lit sheet. Saturation gets a small
     // lift because heavy blurring toward the edges washes colour out.
     var depth = [0.34, 0.20, 0.42, 0.16, 0.27];
     var mesh = picked.slice(0, 5).map(function (c, i) {
-      var s = Math.min(0.80, Math.max(0.34, c[1] * 1.18));
+      var s = chromatic ? Math.min(0.80, Math.max(0.34, c[1] * 1.18))
+                        : Math.min(0.10, c[1]);
       var l = Math.min(0.52, Math.max(0.11, depth[i] * (0.72 + c[2] * 0.75)));
       return hslToRgb(c[0], s, l);
     });
 
     return {
-      // 主色：压住饱和度上限、把亮度抬到深色底上能读清的区间
-      accent: hsl(best[0], Math.min(0.72, Math.max(0.42, best[1])), 0.68),
+      // 主色：压住饱和度上限、把亮度抬到深色底上能读清的区间。
+      // 灰阶封面同样不套饱和度下限——否则背景是灰的、「正在播放」那行
+      // 小字和音波条却是粉红的，两边对不上。
+      accent: chromatic
+        ? hsl(best[0], Math.min(0.72, Math.max(0.42, best[1])), 0.68)
+        : hsl(best[0], Math.min(0.08, best[1]), 0.80),
       // 光晕：同色相压暗，作为背景氛围（无 WebGL 时的降级路径用）
       glowA:  hsl(best[0], Math.min(0.5, best[1]), 0.16),
       glowB:  hsl((best[0] + 28) % 360, Math.min(0.42, best[1] * 0.8), 0.08),
@@ -778,16 +898,19 @@ var Mesh = (function () {
     el.artist.textContent = '';
     el.album.textContent = '';
     el.stamp.textContent = '';
+    shownArt = null;
     el.cover.classList.remove('shown');
     el.cover.removeAttribute('src');
     el.cover.alt = '';
     el.wash.classList.remove('lit');
     el.wash.style.backgroundImage = '';
     applyPalette(null);
+    Mesh.setIdle(true);
   }
 
   function paintTrack(d) {
     el.np.setAttribute('data-state', d.state === 'paused' ? 'paused' : 'playing');
+    Mesh.setIdle(false);
     el.status.textContent = d.state === 'paused' ? '已暂停' : '正在播放';
     el.title.textContent = d.title;
     el.artist.textContent = d.artist || '';
@@ -795,7 +918,13 @@ var Mesh = (function () {
     var age = currentAge();
     el.stamp.textContent = age === null ? '' : '更新于 ' + relTime(age);
 
-    if (d.artwork) {
+    // Guarded on the artwork URL, not just on the song: paintTrack runs on
+    // every poll, and re-assigning an unchanged src makes the browser fire
+    // load again — which would re-decode the cover, re-run colour
+    // extraction and restart the 1.4s crossfade every three seconds, for a
+    // palette that hasn't changed.
+    if (d.artwork && d.artwork !== shownArt) {
+      shownArt = d.artwork;
       el.cover.alt = d.album ? d.album + ' 专辑封面' : '专辑封面';
       el.cover.onload = function () {
         el.cover.classList.add('shown');
@@ -808,12 +937,14 @@ var Mesh = (function () {
         applyPalette(readPalette(el.cover));
       };
       el.cover.onerror = function () {
+        shownArt = null;
         el.cover.classList.remove('shown');
         el.wash.classList.remove('lit');
         applyPalette(null);
       };
       el.cover.src = d.artwork;
-    } else {
+    } else if (!d.artwork) {
+      shownArt = null;
       el.cover.classList.remove('shown');
       el.cover.removeAttribute('src');
       el.wash.classList.remove('lit');
@@ -856,6 +987,18 @@ var Mesh = (function () {
     return raw;
   }
 
+  // The staleness cut-off has to be re-checked against locally elapsed time,
+  // not just against whatever the last successful fetch reported. If the
+  // relay goes down the fetch stops succeeding, so a check that only runs on
+  // success never runs again — and the page sits there insisting he's still
+  // playing a song from hours ago.
+  function expire(d) {
+    if (!d || !d.title) return d;
+    var age = currentAge();
+    if (age !== null && age > STALE_MS) return { offline: true, ageMs: age };
+    return d;
+  }
+
   function poll() {
     fetch(API, { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
@@ -866,7 +1009,8 @@ var Mesh = (function () {
       })
       .catch(function () {
         // 拉不到就保持上一次的画面，时间戳继续自己走——
-        // 一次网络抖动不该让整页变成"没在听歌"。
+        // 一次网络抖动不该让整页变成"没在听歌"。但超过阈值就必须认账。
+        lastData = expire(lastData);
         render(lastData);
       });
   }
@@ -886,13 +1030,33 @@ var Mesh = (function () {
     else { start(); if (meshOn) Mesh.start(); }
   });
 
+  // Swaps the whole page between mesh and blurred-cover backgrounds. Called
+  // at startup and again if the GPU drops the context mid-session — without
+  // this second path a lost context leaves a black page until someone
+  // reloads, which is worse than the fallback it was meant to replace.
+  function useMesh(on) {
+    meshOn = on;
+    el.stage.classList.toggle('mesh-on', on);
+    el.mesh.classList.toggle('lit', on);
+    if (on) {
+      el.wash.classList.remove('lit');
+      Mesh.start();
+    } else {
+      Mesh.stop();
+      var art = lastData && lastData.artwork;
+      if (art) {
+        el.wash.style.backgroundImage = 'url("' + art + '")';
+        el.wash.classList.add('lit');
+      }
+    }
+  }
+
   function startMesh() {
-    meshOn = Mesh.init(el.mesh);
-    if (!meshOn) return;
-    el.stage.classList.add('mesh-on');
-    el.mesh.classList.add('lit');
+    var ok = Mesh.init(el.mesh, function (restored) { useMesh(!!restored); });
+    if (!ok) return;
+    useMesh(true);
     Mesh.setPalette(IDLE_MESH);
-    Mesh.start();
+    Mesh.setIdle(true);
   }
 
   startMesh();
