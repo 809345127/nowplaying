@@ -75,6 +75,23 @@
     overflow: hidden;
   }
 
+  /* The mesh gradient: colours lifted off the cover, drifting as separate
+     pools that bleed into each other. Rendered small and upscaled by CSS —
+     it's nothing but smooth gradients, so the resampling is invisible and
+     it costs a fraction of the pixels. */
+  #mesh {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    opacity: 0;
+    transition: opacity 1.4s ease;
+  }
+  #mesh.lit { opacity: 1; }
+
+  /* Fallback for browsers without WebGL: the cover itself, blurred to a
+     wash. Stays hidden whenever the mesh is running. */
   .wash {
     position: absolute;
     inset: -25%;
@@ -104,6 +121,22 @@
       radial-gradient(120% 90% at 50% 25%, transparent 0%, var(--ground) 78%),
       linear-gradient(to bottom, color-mix(in srgb, var(--ground) 55%, transparent), var(--ground));
     pointer-events: none;
+  }
+
+  /* The blurred-cover fallback is a photo and needs heavy darkening to sit
+     behind text. The mesh is already a controlled palette, so it only needs
+     enough of a vignette to keep the type legible — darkening it as hard as
+     the photo would throw away the colour that's the whole point. */
+  .mesh-on .scrim {
+    background:
+      radial-gradient(120% 95% at 50% 32%,
+        color-mix(in srgb, var(--ground) 18%, transparent) 0%,
+        color-mix(in srgb, var(--ground) 62%, transparent) 55%,
+        color-mix(in srgb, var(--ground) 92%, transparent) 100%),
+      linear-gradient(to bottom,
+        color-mix(in srgb, var(--ground) 30%, transparent),
+        color-mix(in srgb, var(--ground) 20%, transparent) 45%,
+        color-mix(in srgb, var(--ground) 78%, transparent));
   }
 
   /* --- the composition ------------------------------------------ */
@@ -288,7 +321,8 @@
 </style>
 </head>
 <body>
-  <div class="stage">
+  <div class="stage" id="stage">
+    <canvas id="mesh" aria-hidden="true"></canvas>
     <div class="wash" id="wash" aria-hidden="true"></div>
     <div class="scrim" aria-hidden="true"></div>
 
@@ -314,6 +348,220 @@
   </div>
 
 <script>
+/* ------------------------------------------------------------------
+   Mesh gradient background.
+
+   Five colours pulled off the cover art, each attached to a point that
+   drifts on its own slow orbit. Every pixel is an inverse-distance blend
+   of all five, so the pools bleed into one another instead of showing
+   seams, and the whole field is pushed around by a little value noise so
+   the motion reads as organic rather than as five circles on rails.
+
+   Drawn at a fraction of the screen's pixels: the output is nothing but
+   smooth gradients, so upscaling costs nothing visually and saves most of
+   the fill rate. Capped at 30fps for the same reason — the motion is slow
+   enough that more frames would be invisible.
+
+   Falls back silently to the blurred-cover wash if WebGL is unavailable.
+   ------------------------------------------------------------------ */
+var Mesh = (function () {
+  'use strict';
+
+  var COUNT = 5;                 // colour pools
+  var MAX_EDGE = 720;            // longest canvas edge in device pixels
+  var FRAME_MS = 1000 / 30;
+  var BLEND_MS = 1400;           // colour crossfade when the song changes
+
+  var VERT = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
+
+  var FRAG = [
+    'precision highp float;',
+    'uniform vec2 uRes;',
+    'uniform float uTime;',
+    'uniform vec3 uCol[' + COUNT + '];',
+    'uniform vec2 uSeed[' + COUNT + '];',
+
+    'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}',
+    'float noise(vec2 p){',
+    '  vec2 i=floor(p),f=fract(p);',
+    '  vec2 u=f*f*(3.0-2.0*f);',
+    '  return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),',
+    '             mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);',
+    '}',
+
+    'void main(){',
+    '  vec2 uv=gl_FragCoord.xy/uRes;',
+    '  float aspect=uRes.x/uRes.y;',
+    '  vec2 p=vec2(uv.x*aspect,uv.y);',
+    '  float t=uTime;',
+
+    // Domain warp: bends the whole field slowly so the pools deform as
+    // they travel instead of sliding around as rigid blobs.
+    '  vec2 w=vec2(noise(p*1.6+vec2(0.0,t*0.05)),',
+    '              noise(p*1.6+vec2(5.2,t*0.043)));',
+    '  p+=(w-0.5)*0.55;',
+
+    '  vec3 col=vec3(0.0);',
+    '  float total=0.0;',
+    '  for(int i=0;i<' + COUNT + ';i++){',
+    '    float fi=float(i);',
+    '    vec2 c=uSeed[i];',
+    '    c.x*=aspect;',
+    // Each pool on its own orbit; the periods are deliberately unequal so
+    // the arrangement never visibly loops.
+    '    c+=vec2(sin(t*(0.061+fi*0.017)+fi*2.13),',
+    '            cos(t*(0.053+fi*0.014)+fi*1.31))*0.34;',
+    '    float d=distance(p,c);',
+    '    float wgt=1.0/(pow(d,2.4)+0.022);',
+    '    col+=uCol[i]*wgt;',
+    '    total+=wgt;',
+    '  }',
+    '  col/=total;',
+
+    // Per-pixel dither. Without it, gradients this wide and this smooth
+    // band into visible steps on 8-bit displays.
+    '  float g=(hash(gl_FragCoord.xy)-0.5)/200.0;',
+    '  gl_FragColor=vec4(col+g,1.0);',
+    '}'
+  ].join('\n');
+
+  var gl, prog, loc = {}, canvas;
+  var from = [], to = [], now = [], seeds = [];
+  var blendStart = 0, running = false, raf = 0, lastDraw = 0, t0 = 0;
+  var reduced = false;
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(s) || 'shader compile failed');
+    }
+    return s;
+  }
+
+  // Fixed, well-spread starting positions. Random ones clump often enough
+  // to leave a corner flat, and there's no reason to gamble on it.
+  function defaultSeeds() {
+    return [[0.22, 0.28], [0.78, 0.22], [0.5, 0.55], [0.2, 0.8], [0.85, 0.75]];
+  }
+
+  function resize() {
+    var r = canvas.getBoundingClientRect();
+    var w = Math.max(1, r.width), h = Math.max(1, r.height);
+    var scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+    var cw = Math.round(w * scale), ch = Math.round(h * scale);
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw;
+      canvas.height = ch;
+      gl.viewport(0, 0, cw, ch);
+    }
+  }
+
+  function draw(ts) {
+    raf = 0;
+    if (!running) return;
+    if (ts - lastDraw >= FRAME_MS) {
+      lastDraw = ts;
+      resize();
+
+      var k = blendStart ? Math.min(1, (ts - blendStart) / BLEND_MS) : 1;
+      k = k * k * (3 - 2 * k);                      // ease the colour change
+      for (var i = 0; i < COUNT; i++) {
+        for (var c = 0; c < 3; c++) {
+          now[i * 3 + c] = from[i * 3 + c] + (to[i * 3 + c] - from[i * 3 + c]) * k;
+        }
+      }
+
+      gl.useProgram(prog);
+      gl.uniform2f(loc.res, canvas.width, canvas.height);
+      // Frozen clock under reduced-motion: still a mesh, just not moving.
+      gl.uniform1f(loc.time, reduced ? 12.0 : (ts - t0) / 1000);
+      gl.uniform3fv(loc.col, now);
+      gl.uniform2fv(loc.seed, seeds);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+    if (!reduced || blendStart) raf = requestAnimationFrame(draw);
+  }
+
+  function kick() {
+    if (!running || raf) return;
+    raf = requestAnimationFrame(draw);
+  }
+
+  return {
+    // Returns false when WebGL isn't usable, so the caller can leave the
+    // blurred-cover fallback in place.
+    init: function (el) {
+      canvas = el;
+      try {
+        gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false })
+          || canvas.getContext('experimental-webgl');
+      } catch (e) { gl = null; }
+      if (!gl) return false;
+
+      try {
+        prog = gl.createProgram();
+        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+      } catch (e) { return false; }
+
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 3, -1, -1, 3, -1, 3, 3, -1, 3, 3]), gl.STATIC_DRAW);
+      var a = gl.getAttribLocation(prog, 'p');
+      gl.enableVertexAttribArray(a);
+      gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+
+      loc.res = gl.getUniformLocation(prog, 'uRes');
+      loc.time = gl.getUniformLocation(prog, 'uTime');
+      loc.col = gl.getUniformLocation(prog, 'uCol[0]');
+      loc.seed = gl.getUniformLocation(prog, 'uSeed[0]');
+
+      from = new Float32Array(COUNT * 3);
+      to = new Float32Array(COUNT * 3);
+      now = new Float32Array(COUNT * 3);
+      seeds = new Float32Array([].concat.apply([], defaultSeeds()));
+
+      reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      t0 = performance.now();
+      return true;
+    },
+
+    // colors: COUNT entries of [r,g,b] in 0..1. Crossfades from whatever is
+    // on screen, so a track change dissolves instead of cutting.
+    setPalette: function (colors) {
+      if (!gl) return;
+      from.set(now);
+      for (var i = 0; i < COUNT; i++) {
+        var c = colors[i % colors.length] || [0, 0, 0];
+        to[i * 3] = c[0]; to[i * 3 + 1] = c[1]; to[i * 3 + 2] = c[2];
+      }
+      blendStart = performance.now();
+      // A palette change has to reach the screen even when motion is
+      // reduced and the loop would otherwise be parked.
+      kick();
+    },
+
+    start: function () {
+      if (!gl || running) return;
+      running = true;
+      lastDraw = 0;
+      kick();
+    },
+
+    stop: function () {
+      running = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    },
+
+    available: function () { return !!gl; }
+  };
+})();
+
 (function () {
   'use strict';
 
@@ -329,6 +577,8 @@
 
   var el = {
     np: document.getElementById('np'),
+    stage: document.getElementById('stage'),
+    mesh: document.getElementById('mesh'),
     wash: document.getElementById('wash'),
     cover: document.getElementById('cover'),
     title: document.getElementById('title'),
@@ -343,6 +593,11 @@
   var lastData = null;
   var fetchedAt = 0;     // 上次取到数据的本机时刻，用来让"更新于 X 前"自己走秒
   var timer = null;
+
+  // Decided once at startup (down at startMesh, once IDLE_MESH exists).
+  // Everything downstream branches on this rather than re-testing, so the
+  // page can't end up half in one mode.
+  var meshOn = false;
 
   /* ---------- 从封面里取主色 ---------- */
 
@@ -362,6 +617,28 @@
 
   function hsl(h, s, l) {
     return 'hsl(' + h.toFixed(0) + ' ' + (s * 100).toFixed(0) + '% ' + (l * 100).toFixed(0) + '%)';
+  }
+
+  function hslToRgb(h, s, l) {
+    h = (((h % 360) + 360) % 360) / 360;
+    if (s === 0) return [l, l, l];
+    var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    var p = 2 * l - q;
+    var f = function (t) {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    return [f(h + 1 / 3), f(h), f(h - 1 / 3)];
+  }
+
+  // Shortest distance between two hues on the colour wheel, in degrees.
+  function hueGap(a, b) {
+    var d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
   }
 
   // 把封面缩到 40x40 后按颜色分桶统计，挑一个"够鲜艳又够常见"的做主色。
@@ -388,29 +665,71 @@
       e.r += r; e.g += g; e.b += b; e.n++;
     }
 
-    var best = null, bestScore = -1, biggest = null, biggestN = -1;
+    var cands = [], biggest = null, biggestN = -1;
     for (var key in buckets) {
       var q = buckets[key];
-      var cr = q.r / q.n, cg = q.g / q.n, cb = q.b / q.n;
-      var c = rgbToHsl(cr, cg, cb);
+      var c = rgbToHsl(q.r / q.n, q.g / q.n, q.b / q.n);
       if (q.n > biggestN) { biggestN = q.n; biggest = c; }
       if (c[2] < 0.12 || c[2] > 0.9) continue;   // 太黑或太白，跳过
-      var score = Math.sqrt(q.n) * (c[1] + 0.12);
-      if (score > bestScore) { bestScore = score; best = c; }
+      // 常见程度开方，避免一片大背景色压倒所有点缀色
+      cands.push({ h: c, score: Math.sqrt(q.n) * (c[1] + 0.12) });
+    }
+    cands.sort(function (a, b) { return b.score - a.score; });
+
+    if (!cands.length && biggest) cands.push({ h: biggest, score: 1 });
+    if (!cands.length) return null;
+
+    var best = cands[0].h;
+
+    // Pick colours for the mesh by hue spread, not by rank alone: the top
+    // five buckets of a cover are usually five shades of the same colour,
+    // which renders as a flat field. Walk the list three times, relaxing
+    // how far apart the hues must be, so a genuinely monochrome cover
+    // still fills all five slots instead of coming up short.
+    var picked = [], used = {};
+    [40, 18, 0].forEach(function (minGap) {
+      for (var i = 0; i < cands.length && picked.length < 5; i++) {
+        if (used[i]) continue;
+        var h = cands[i].h[0];
+        var far = picked.every(function (p) { return hueGap(p[0], h) >= minGap; });
+        if (far) { picked.push(cands[i].h); used[i] = 1; }
+      }
+    });
+    // Still short (a cover with only one or two usable buckets): fan out
+    // from what we have rather than repeating one colour five times.
+    while (picked.length < 5) {
+      var src = picked[picked.length % Math.max(1, picked.length)] || best;
+      picked.push([src[0] + 24 * picked.length, src[1] * 0.85, src[2]]);
     }
 
-    if (!best) best = biggest;
-    if (!best) return null;
+    // Depth: alternate lighter and darker pools so the field reads as
+    // volume rather than as one evenly-lit sheet. Saturation gets a small
+    // lift because heavy blurring toward the edges washes colour out.
+    var depth = [0.34, 0.20, 0.42, 0.16, 0.27];
+    var mesh = picked.slice(0, 5).map(function (c, i) {
+      var s = Math.min(0.80, Math.max(0.34, c[1] * 1.18));
+      var l = Math.min(0.52, Math.max(0.11, depth[i] * (0.72 + c[2] * 0.75)));
+      return hslToRgb(c[0], s, l);
+    });
 
     return {
       // 主色：压住饱和度上限、把亮度抬到深色底上能读清的区间
       accent: hsl(best[0], Math.min(0.72, Math.max(0.42, best[1])), 0.68),
-      // 光晕：同色相压暗，作为背景氛围
+      // 光晕：同色相压暗，作为背景氛围（无 WebGL 时的降级路径用）
       glowA:  hsl(best[0], Math.min(0.5, best[1]), 0.16),
       glowB:  hsl((best[0] + 28) % 360, Math.min(0.42, best[1] * 0.8), 0.08),
+      mesh:   mesh,
       raw:    best
     };
   }
+
+  // What the mesh shows when nothing is playing: the page's own neutral,
+  // barely moving. Still a mesh rather than flat black, so the transition
+  // into a song is a colour change and not the background appearing.
+  var IDLE_MESH = [
+    [0.055, 0.055, 0.075], [0.075, 0.075, 0.095], [0.045, 0.048, 0.065],
+    [0.085, 0.082, 0.100], [0.050, 0.052, 0.070]
+  ];
 
   function applyPalette(p) {
     var root = document.documentElement.style;
@@ -419,12 +738,14 @@
       root.removeProperty('--glow-a');
       root.removeProperty('--glow-b');
       if (el.themeColor) el.themeColor.setAttribute('content', '#08080B');
+      if (meshOn) Mesh.setPalette(IDLE_MESH);
       return;
     }
     root.setProperty('--accent', p.accent);
     root.setProperty('--glow-a', p.glowA);
     root.setProperty('--glow-b', p.glowB);
     if (el.themeColor) el.themeColor.setAttribute('content', p.glowB);
+    if (meshOn && p.mesh) Mesh.setPalette(p.mesh);
   }
 
   /* ---------- 渲染 ---------- */
@@ -478,8 +799,12 @@
       el.cover.alt = d.album ? d.album + ' 专辑封面' : '专辑封面';
       el.cover.onload = function () {
         el.cover.classList.add('shown');
-        el.wash.style.backgroundImage = 'url("' + d.artwork + '")';
-        el.wash.classList.add('lit');
+        // The blurred-cover wash is the no-WebGL path only; lighting it
+        // under a running mesh would just muddy the colours.
+        if (!meshOn) {
+          el.wash.style.backgroundImage = 'url("' + d.artwork + '")';
+          el.wash.classList.add('lit');
+        }
         applyPalette(readPalette(el.cover));
       };
       el.cover.onerror = function () {
@@ -555,12 +880,22 @@
     if (timer) { clearInterval(timer); timer = null; }
   }
 
-  // 页面切到后台就停止轮询，回到前台立刻拉一次
+  // 页面切到后台就停止轮询和动画，回到前台立刻恢复
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) stop();
-    else start();
+    if (document.hidden) { stop(); Mesh.stop(); }
+    else { start(); if (meshOn) Mesh.start(); }
   });
 
+  function startMesh() {
+    meshOn = Mesh.init(el.mesh);
+    if (!meshOn) return;
+    el.stage.classList.add('mesh-on');
+    el.mesh.classList.add('lit');
+    Mesh.setPalette(IDLE_MESH);
+    Mesh.start();
+  }
+
+  startMesh();
   start();
 
   // 时间戳每 20 秒自己走一格，不用等下一次取数
