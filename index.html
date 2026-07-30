@@ -136,13 +136,13 @@
   .mesh-on .scrim {
     background:
       radial-gradient(120% 95% at 50% 32%,
-        color-mix(in srgb, var(--ground) 26%, transparent) 0%,
-        color-mix(in srgb, var(--ground) 58%, transparent) 55%,
-        color-mix(in srgb, var(--ground) 90%, transparent) 100%),
+        color-mix(in srgb, var(--ground) 14%, transparent) 0%,
+        color-mix(in srgb, var(--ground) 44%, transparent) 55%,
+        color-mix(in srgb, var(--ground) 84%, transparent) 100%),
       linear-gradient(to bottom,
-        color-mix(in srgb, var(--ground) 30%, transparent),
-        color-mix(in srgb, var(--ground) 22%, transparent) 45%,
-        color-mix(in srgb, var(--ground) 74%, transparent));
+        color-mix(in srgb, var(--ground) 20%, transparent),
+        color-mix(in srgb, var(--ground) 12%, transparent) 45%,
+        color-mix(in srgb, var(--ground) 64%, transparent));
   }
 
   /* Contrast insurance for the text itself. A pale pool can drift under the
@@ -606,11 +606,18 @@
   /* The syllable fill. Each word paints a hard-edged gradient clipped to
      its own glyphs, and --p walks the edge across as that syllable is sung.
      Only the active line's words carry it, so a whole song's worth of
-     spans isn't being repainted every frame. */
+     spans isn't being repainted every frame.
+
+     Both ends of the gradient must be fully opaque. The line carries a dark
+     text-shadow for contrast, and a shadow sits *behind* the glyph — so a
+     half-transparent one lets that shadow show through its own strokes, and
+     the un-sung words come out looking grubby, white with black in them
+     rather than simply dimmer. Mixing toward the page colour instead of
+     toward transparent gives the same dimming with nothing behind to leak. */
   .lyric-line.active .lyric-w {
     background-image: linear-gradient(90deg,
       var(--text) 0 var(--p, 0%),
-      color-mix(in srgb, var(--text) 46%, transparent) var(--p, 0%) 100%);
+      color-mix(in srgb, var(--text) 52%, var(--ground)) var(--p, 0%) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -618,13 +625,15 @@
   /* Backing vocals — the "(what can I do?)" behind the lead line. */
   .lyric-w.bg { font-size: .84em; opacity: .78; }
 
-  /* Same reasoning as .mesh-on .notes: the mesh has no fixed dark region,
-     so a pale pool can drift under the words at any moment. A shadow keeps
-     them readable without darkening the background the mesh exists to
-     show. It still draws under transparent, background-clipped text —
-     shadows follow the glyph outline, not its fill. */
+  /* Same reasoning as .mesh-on .notes: the mesh has no fixed dark region, so
+     a pale pool can drift under the words at any moment. A shadow keeps them
+     readable without darkening the background the mesh exists to show.
+     One soft pool, not the tight 3px shadow that used to sit under it: at
+     this size that one didn't read as depth, it read as an outline drawn
+     around every stroke, and lyrics in a player should be clean type on a
+     blurred field. */
   .mesh-on .lyric-line {
-    text-shadow: 0 1px 10px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+    text-shadow: 0 1px 16px rgba(0, 0, 0, .5);
   }
 
   /* Nothing here is information — it's the same words either way — so an
@@ -1192,13 +1201,21 @@ var Mesh = (function () {
     var chromatic = picked.slice(0, 5).some(function (c) { return c[1] > 0.10; });
 
     // Depth: alternate lighter and darker pools so the field reads as
-    // volume rather than as one evenly-lit sheet. Saturation gets a small
-    // lift because heavy blurring toward the edges washes colour out.
-    var depth = [0.34, 0.20, 0.42, 0.16, 0.27];
+    // volume rather than as one evenly-lit sheet.
+    //
+    // Both saturation and lightness are aimed at what a blurred cover
+    // actually looks like once it has been blurred that far: colour averages
+    // out toward grey, and the result sits in the middle of the range rather
+    // than at the bottom. Boosting saturation and pushing lightness down —
+    // which is what this used to do — turns a photograph of a pale wall into
+    // a dark red-brown field that the cover never contained. Held to a
+    // ceiling on both counts, so a vivid sleeve tints the room without
+    // lighting it up.
+    var depth = [0.48, 0.36, 0.56, 0.31, 0.42];
     var mesh = picked.slice(0, 5).map(function (c, i) {
-      var s = chromatic ? Math.min(0.80, Math.max(0.34, c[1] * 1.18))
-                        : Math.min(0.10, c[1]);
-      var l = Math.min(0.52, Math.max(0.11, depth[i] * (0.72 + c[2] * 0.75)));
+      var s = chromatic ? Math.min(0.30, Math.max(0.06, c[1] * 0.5))
+                        : Math.min(0.05, c[1]);
+      var l = Math.min(0.56, Math.max(0.15, depth[i] * (0.74 + c[2] * 0.6)));
       return hslToRgb(c[0], s, l);
     });
 
