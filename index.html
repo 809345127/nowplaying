@@ -26,7 +26,13 @@
 
     --sleeve: clamp(184px, 32vw, 328px);
 
-    --font-display: ui-serif, "New York", "Iowan Old Style", "Songti SC", Georgia, serif;
+    /* The system face, which on a Mac is the same one Apple Music itself
+       draws with — the display cut for the headline, the text cut for
+       everything small. Elsewhere the stack degrades to whatever that
+       platform considers its own voice, which is the point: this should
+       look native, not like a page carrying its own typeface along. */
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                    "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
     --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
                  "Helvetica Neue", "Microsoft YaHei", sans-serif;
   }
@@ -130,13 +136,13 @@
   .mesh-on .scrim {
     background:
       radial-gradient(120% 95% at 50% 32%,
-        color-mix(in srgb, var(--ground) 40%, transparent) 0%,
-        color-mix(in srgb, var(--ground) 70%, transparent) 55%,
-        color-mix(in srgb, var(--ground) 94%, transparent) 100%),
+        color-mix(in srgb, var(--ground) 26%, transparent) 0%,
+        color-mix(in srgb, var(--ground) 58%, transparent) 55%,
+        color-mix(in srgb, var(--ground) 90%, transparent) 100%),
       linear-gradient(to bottom,
-        color-mix(in srgb, var(--ground) 42%, transparent),
-        color-mix(in srgb, var(--ground) 34%, transparent) 45%,
-        color-mix(in srgb, var(--ground) 82%, transparent));
+        color-mix(in srgb, var(--ground) 30%, transparent),
+        color-mix(in srgb, var(--ground) 22%, transparent) 45%,
+        color-mix(in srgb, var(--ground) 74%, transparent));
   }
 
   /* Contrast insurance for the text itself. A pale pool can drift under the
@@ -190,8 +196,8 @@
      need more room than a cover beside a title. */
   @media (min-width: 900px) {
     .np.has-lyrics {
-      --sleeve: clamp(148px, 19vw, 264px);
-      grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+      --sleeve: clamp(160px, 22vw, 300px);
+      grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
       grid-template-areas:
         "sleeve lyrics"
         "notes  lyrics";
@@ -204,7 +210,22 @@
       max-width: 68rem;
     }
     .np.has-lyrics .status { justify-content: flex-start; }
-    .np.has-lyrics .lyrics { height: clamp(15rem, 48vh, 30rem); }
+    /* Tall enough that the words hold the frame the way they do in a
+       full-screen player, rather than sitting as a small panel beside the
+       cover. Roughly matches the height of the sleeve-and-title column
+       next to it. */
+    .np.has-lyrics .lyrics { height: clamp(17rem, 60vh, 36rem); }
+
+    /* Once the words are on screen they are the subject, and the title
+       becomes the caption on the cover rather than the headline of the
+       page. Only in this layout: with no lyrics there is nothing else for
+       the eye to land on, and the title should carry the whole frame. */
+    .np.has-lyrics h1 {
+      font-size: clamp(1.35rem, 2.05vw, 1.9rem);
+      letter-spacing: -.012em;
+    }
+    .np.has-lyrics .artist { font-size: 1rem; }
+    .np.has-lyrics .album  { font-size: .84rem; }
   }
 
   /* Stacked and showing lyrics: the cover gives up some size so the words
@@ -313,10 +334,12 @@
   h1 {
     margin: 0;
     font-family: var(--font-display);
-    font-weight: 600;
-    font-size: clamp(1.75rem, 4.6vw, 3.15rem);
+    font-weight: 700;
+    font-size: clamp(1.6rem, 4.2vw, 2.75rem);
     line-height: 1.12;
-    letter-spacing: -.015em;
+    /* Negative tracking is what makes a large system-font headline look
+       set rather than typed; SF is drawn expecting it at display sizes. */
+    letter-spacing: -.022em;
     text-wrap: balance;
     overflow-wrap: anywhere;
   }
@@ -334,6 +357,56 @@
     font-size: .92rem;
     color: var(--text-dim);
     overflow-wrap: anywhere;
+  }
+
+  /* --- playhead --------------------------------------------------- */
+
+  /* Shown the way a player shows it: a rail, how far in, how much is left.
+     Deliberately not draggable — this page is a window onto someone else's
+     listening session, and a scrubber that moves under the finger but
+     changes nothing would promise a control that cannot exist here. */
+  .scrub {
+    width: 100%;
+    max-width: 21rem;
+    margin: .35rem auto .1rem;
+  }
+  .scrub[hidden] { display: none; }
+  @media (min-width: 720px) {
+    .np:not(.has-lyrics) .scrub { margin-left: 0; }
+  }
+  @media (min-width: 900px) {
+    .np.has-lyrics .scrub { margin-left: 0; }
+  }
+
+  .scrub-rail {
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text) 20%, transparent);
+    overflow: hidden;
+  }
+  .scrub-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--text) 72%, transparent);
+    /* Matched to the repaint interval, so the bar crawls continuously
+       instead of ticking twice a second. */
+    transition: width .5s linear;
+  }
+  .scrub-times {
+    display: flex;
+    justify-content: space-between;
+    margin-top: .4rem;
+    font-size: .68rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+    color: var(--text-faint);
+  }
+  .mesh-on .scrub-times { color: color-mix(in srgb, var(--text) 55%, var(--text-faint)); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scrub-fill { transition: none; }
   }
 
   .stamp {
@@ -476,22 +549,50 @@
     transition: transform .5s cubic-bezier(.22, .61, .36, 1);
   }
 
+  /* --d is how many lines away from the one being sung this is, written by
+     setActive and clamped there. Everything about a line's appearance is a
+     function of it.
+
+     The defocus is the point. Apple's player doesn't merely dim the lines
+     it isn't singing — it throws them out of focus, so the column reads as
+     one plane with a single sharp line on it rather than as a list with a
+     bright row. Dimming alone never quite looks like that, however far it's
+     pushed, because dim text is still crisp text.
+
+     Blur in em rather than px so it tracks the type as the column resizes:
+     a fixed radius that reads right on a desktop turns a phone's smaller
+     lyrics to mush. */
   .lyric-line {
+    --d: 5;
     margin: 0;
-    padding: .42em 0;
-    font-size: clamp(1.02rem, 2vw, 1.45rem);
-    font-weight: 600;
-    line-height: 1.36;
-    letter-spacing: .005em;
+    padding: .56em 0;
+    font-size: clamp(1.08rem, 2.3vw, 1.72rem);
+    font-weight: 700;
+    line-height: 1.34;
+    letter-spacing: -.005em;
     color: var(--text);
-    opacity: .32;
-    transition: opacity .45s ease;
+    opacity: calc(.66 - var(--d) * .095);
+    filter: blur(calc(var(--d) * .072em));
+    transition: opacity .5s ease, filter .5s ease, transform .5s ease;
     overflow-wrap: anywhere;
   }
-  /* Sung lines recede further than upcoming ones — the eye should be
-     pulled forward, not back. */
-  .lyric-line.past   { opacity: .16; }
-  .lyric-line.active { opacity: 1; }
+  /* Sung lines recede a little further than upcoming ones — the eye should
+     be pulled forward, not back. */
+  .lyric-line.past { opacity: calc(.52 - var(--d) * .085); }
+  .lyric-line.active {
+    opacity: 1;
+    filter: none;                 /* not blur(0): that still forces a raster pass */
+    /* Scaled rather than sized: a font-size change would reflow every line
+       below it, and the scroll offsets were measured before that. */
+    transform: scale(1.04);
+    transform-origin: left center;
+  }
+  /* Past the window's edge the mask has already taken these to nothing, so
+     blurring them is work nobody sees — and a song is fifty lines of it. */
+  .lyric-line.far {
+    opacity: .05;
+    filter: none;
+  }
 
   .lyric-tr {
     display: block;
@@ -509,7 +610,7 @@
   .lyric-line.active .lyric-w {
     background-image: linear-gradient(90deg,
       var(--text) 0 var(--p, 0%),
-      color-mix(in srgb, var(--text) 34%, transparent) var(--p, 0%) 100%);
+      color-mix(in srgb, var(--text) 46%, transparent) var(--p, 0%) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -582,6 +683,16 @@
         <h1 id="title">…</h1>
         <p class="artist" id="artist"></p>
         <p class="album" id="album"></p>
+
+        <!-- aria-hidden: this ticks every half second, and a live region
+             reading the playhead aloud would talk over the song title. -->
+        <div class="scrub" id="scrub" hidden aria-hidden="true">
+          <div class="scrub-rail"><i class="scrub-fill" id="scrub-fill"></i></div>
+          <div class="scrub-times">
+            <span id="time-done">0:00</span>
+            <span id="time-left">−0:00</span>
+          </div>
+        </div>
 
         <div class="actions" id="actions" hidden>
           <button class="preview" id="preview-btn" type="button" hidden aria-pressed="false">
@@ -935,6 +1046,10 @@ var Mesh = (function () {
     stamp: document.getElementById('stamp'),
     lyrics: document.getElementById('lyrics'),
     lyricsTrack: document.getElementById('lyrics-track'),
+    scrub: document.getElementById('scrub'),
+    scrubFill: document.getElementById('scrub-fill'),
+    timeDone: document.getElementById('time-done'),
+    timeLeft: document.getElementById('time-left'),
     actions: document.getElementById('actions'),
     previewBtn: document.getElementById('preview-btn'),
     previewText: document.getElementById('preview-text'),
@@ -1157,11 +1272,43 @@ var Mesh = (function () {
     return t;
   }
 
+  /* ---------- 进度条 ---------- */
+
+  /* 位置和总长本来就为了歌词在算，画一条进度条是顺手的事。
+     它读的是本页自己走的那个时钟，所以三秒一次的取数之间也在动。 */
+  var Scrub = (function () {
+    function clock(ms) {
+      var s = Math.max(0, Math.round(ms / 1000));
+      var m = Math.floor(s / 60);
+      s -= m * 60;
+      return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function paint() {
+      var ms = headMs();
+      // 没有总时长就算不出"还剩多少"，与其画半条不如不画
+      if (ms < 0 || head.durMs <= 0) { clear(); return; }
+      if (ms > head.durMs) ms = head.durMs;
+      el.scrub.hidden = false;
+      el.scrubFill.style.width = (ms / head.durMs * 100).toFixed(2) + '%';
+      el.timeDone.textContent = clock(ms);
+      el.timeLeft.textContent = '−' + clock(head.durMs - ms);
+    }
+
+    function clear() {
+      el.scrub.hidden = true;
+      el.scrubFill.style.width = '0';
+    }
+
+    return { paint: paint, clear: clear };
+  })();
+
   /* ---------- 歌词 ---------- */
 
   var Lyric = (function () {
     var FRAME_MS = 1000 / 30;     // 逐字点亮，30 帧足够顺，再高看不出来
     var CENTER = 0.42;            // 当前句停在窗口偏上一点，给下一句留出预读空间
+    var FAR = 5;                  // 超过这么远就已经在窗口外了，不再花代价去虚化
 
     var data = null;
     var lineEls = [], wordEls = [], centers = [];
@@ -1242,10 +1389,18 @@ var Mesh = (function () {
 
     function setActive(idx) {
       for (var i = 0; i < lineEls.length; i++) {
+        var p = lineEls[i];
+        // 距离当前句几行。前奏里还没有"当前句"，就按离开头多远算，
+        // 这样第一句本身是清楚的，越往下越虚——跟唱起来之后是同一套观感。
+        var d = Math.abs(i - (idx < 0 ? 0 : idx));
+        if (d > FAR) d = FAR;
+
         var cls = 'lyric-line';
         if (i === idx) cls += ' active';
-        else if (i < idx) cls += ' past';
-        if (lineEls[i].className !== cls) lineEls[i].className = cls;
+        else if (idx >= 0 && i < idx) cls += ' past';
+        if (d >= FAR) cls += ' far';
+        if (p.className !== cls) p.className = cls;
+        if (p._d !== d) { p._d = d; p.style.setProperty('--d', d); }
       }
       // 前奏还没开始唱时不要把第一句顶到中间，让它自然待在原位
       var target = idx < 0 ? 0 : centers[idx] - el.lyrics.clientHeight * CENTER;
@@ -1485,6 +1640,7 @@ var Mesh = (function () {
     Mesh.setIdle(true);
     Lyric.hide();
     Preview.clear();
+    Scrub.clear();
   }
 
   function paintTrack(d) {
@@ -1493,6 +1649,7 @@ var Mesh = (function () {
     Lyric.want(d.lyricsId);
     Lyric.setPlaying(d.state === 'playing');
     Preview.set(d.preview, d.link);
+    Scrub.paint();
     el.status.textContent = d.state === 'paused' ? '已暂停' : '正在播放';
     el.title.textContent = d.title;
     el.artist.textContent = d.artist || '';
@@ -1655,6 +1812,11 @@ var Mesh = (function () {
 
   startMesh();
   start();
+
+  // 进度条自己走秒，不用等三秒一次的取数
+  setInterval(function () {
+    if (!document.hidden && el.np.getAttribute('data-state') !== 'idle') Scrub.paint();
+  }, 500);
 
   // 时间戳每 20 秒自己走一格，不用等下一次取数
   setInterval(function () {
