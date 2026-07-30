@@ -163,15 +163,54 @@
     text-align: center;
     opacity: 1;
     transition: opacity .45s ease;
+    /* Named areas rather than source order, because the three pieces
+       rearrange completely between layouts and two of the arrangements
+       aren't reachable by reordering a two-column grid. */
+    grid-template-areas: "sleeve" "notes" "lyrics";
   }
   .np.swapping { opacity: 0; }
 
+  .sleeve { grid-area: sleeve; }
+  .notes  { grid-area: notes; }
+  .lyrics { grid-area: lyrics; }
+
+  /* No lyrics — the original composition: sleeve beside its liner notes. */
   @media (min-width: 720px) {
-    .np {
+    .np:not(.has-lyrics) {
       grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: "sleeve notes";
       justify-items: start;
       text-align: left;
     }
+  }
+
+  /* With lyrics, the sleeve and its notes stack into one column and the
+     words take the other — the full-screen-player arrangement. The
+     breakpoint is higher than the one above because two columns of text
+     need more room than a cover beside a title. */
+  @media (min-width: 900px) {
+    .np.has-lyrics {
+      --sleeve: clamp(148px, 19vw, 264px);
+      grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+      grid-template-areas:
+        "sleeve lyrics"
+        "notes  lyrics";
+      grid-template-rows: auto auto;
+      align-content: center;
+      column-gap: clamp(2rem, 4.5vw, 4rem);
+      row-gap: clamp(1.25rem, 2.5vw, 2rem);
+      justify-items: start;
+      text-align: left;
+      max-width: 68rem;
+    }
+    .np.has-lyrics .status { justify-content: flex-start; }
+    .np.has-lyrics .lyrics { height: clamp(15rem, 48vh, 30rem); }
+  }
+
+  /* Stacked and showing lyrics: the cover gives up some size so the words
+     get room. It's still the largest thing on screen. */
+  @media (max-width: 899px) {
+    .np.has-lyrics { --sleeve: clamp(120px, 30vw, 190px); }
   }
 
   /* --- sleeve ---------------------------------------------------- */
@@ -235,8 +274,11 @@
     color: var(--accent);
     transition: color .6s ease;
   }
+  /* Scoped to the no-lyrics layout: between 720 and 900 the lyrics version
+     is still stacked and centred, and a left-aligned status line under a
+     centred title reads as a mistake. */
   @media (min-width: 720px) {
-    .status { justify-content: flex-start; }
+    .np:not(.has-lyrics) .status { justify-content: flex-start; }
   }
 
   /* Equalizer: the one motif every now-playing display shares.
@@ -302,6 +344,195 @@
     letter-spacing: .02em;
   }
 
+  /* --- listening ------------------------------------------------- */
+
+  /* Whoever opens this page can see the song but not hear it — the audio is
+     this Mac's Apple Music session, not something a web page can hand out.
+     These two controls are what's actually possible: a clip Apple serves to
+     anyone, and a way into the visitor's own copy. */
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: .9rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: .5rem;
+  }
+  .actions[hidden] { display: none; }
+
+  @media (min-width: 720px) {
+    .np:not(.has-lyrics) .actions { justify-content: flex-start; }
+  }
+  @media (min-width: 900px) {
+    .np.has-lyrics .actions { justify-content: flex-start; }
+  }
+
+  .preview {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .42rem .9rem .42rem .78rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+    color: var(--accent);
+    font: inherit;
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    line-height: 1;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color .3s ease, background-color .25s ease, color .3s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .preview[hidden] { display: none; }
+  .preview:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+  .preview:disabled { cursor: default; opacity: .5; }
+
+  /* The clip's progress fills the button itself rather than a separate bar:
+     one object on screen instead of two, and it makes the 30-second limit
+     visible while it runs down. */
+  .preview::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--pv, 0%);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    transition: width .25s linear;
+    pointer-events: none;
+  }
+  .preview > * { position: relative; }
+
+  /* Play triangle, becoming a stop square while the clip runs. */
+  .preview-glyph {
+    width: 9px;
+    height: 10px;
+    margin-left: 1px;
+    background: currentColor;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+    transition: clip-path .2s ease, border-radius .2s ease;
+  }
+  .preview.on .preview-glyph {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+    border-radius: 1.5px;
+  }
+
+  .open-am {
+    font-size: .76rem;
+    font-weight: 500;
+    letter-spacing: .03em;
+    color: var(--text-dim);
+    text-decoration: none;
+    white-space: nowrap;
+    border-bottom: 1px solid transparent;
+    transition: color .3s ease, border-color .3s ease;
+  }
+  .open-am[hidden] { display: none; }
+  .open-am:hover { color: var(--text); border-bottom-color: color-mix(in srgb, var(--text) 35%, transparent); }
+  .open-am .arrow { margin-left: .28em; font-size: .92em; }
+
+  .mesh-on .open-am { color: color-mix(in srgb, var(--text) 72%, var(--text-dim)); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .preview::before, .preview-glyph { transition: none; }
+  }
+
+  /* --- lyrics ---------------------------------------------------- */
+
+  .lyrics {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    /* Stacked layouts spend most of the viewport on the cover and the title
+       before the words even start, and the stage clips rather than scrolls —
+       so a height tuned for the wide layout runs the last lines off the
+       bottom of a phone and straight through the footer. The wide layout
+       raises this again below, where the cover sits beside the words instead
+       of above them. */
+    height: clamp(11rem, 34vh, 30rem);
+    overflow: hidden;
+    text-align: left;
+    /* Lines fade in and out at the edges instead of being sliced off, so
+       the column reads as a window onto a longer song. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 80%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 80%, transparent 100%);
+  }
+  .lyrics[hidden] { display: none; }
+
+  /* Moved with a transform rather than by scrolling: scroll position is
+     shared state a user can fight with, and this has to keep following the
+     song whether or not anyone has touched the page. */
+  .lyrics-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    will-change: transform;
+    transition: transform .5s cubic-bezier(.22, .61, .36, 1);
+  }
+
+  .lyric-line {
+    margin: 0;
+    padding: .42em 0;
+    font-size: clamp(1.02rem, 2vw, 1.45rem);
+    font-weight: 600;
+    line-height: 1.36;
+    letter-spacing: .005em;
+    color: var(--text);
+    opacity: .32;
+    transition: opacity .45s ease;
+    overflow-wrap: anywhere;
+  }
+  /* Sung lines recede further than upcoming ones — the eye should be
+     pulled forward, not back. */
+  .lyric-line.past   { opacity: .16; }
+  .lyric-line.active { opacity: 1; }
+
+  .lyric-tr {
+    display: block;
+    margin-top: .22em;
+    font-size: .72em;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--text-dim);
+  }
+
+  /* The syllable fill. Each word paints a hard-edged gradient clipped to
+     its own glyphs, and --p walks the edge across as that syllable is sung.
+     Only the active line's words carry it, so a whole song's worth of
+     spans isn't being repainted every frame. */
+  .lyric-line.active .lyric-w {
+    background-image: linear-gradient(90deg,
+      var(--text) 0 var(--p, 0%),
+      color-mix(in srgb, var(--text) 34%, transparent) var(--p, 0%) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  /* Backing vocals — the "(what can I do?)" behind the lead line. */
+  .lyric-w.bg { font-size: .84em; opacity: .78; }
+
+  /* Same reasoning as .mesh-on .notes: the mesh has no fixed dark region,
+     so a pale pool can drift under the words at any moment. A shadow keeps
+     them readable without darkening the background the mesh exists to
+     show. It still draws under transparent, background-clipped text —
+     shadows follow the glyph outline, not its fill. */
+  .mesh-on .lyric-line {
+    text-shadow: 0 1px 10px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+  }
+
+  /* Nothing here is information — it's the same words either way — so an
+     animation-sensitive reader gets them without the travel. */
+  @media (prefers-reduced-motion: reduce) {
+    .lyrics-track { transition: none; }
+    .lyric-line { transition: none; }
+  }
+
   /* --- idle state ------------------------------------------------ */
 
   [data-state="idle"] .sleeve { box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); }
@@ -351,7 +582,25 @@
         <h1 id="title">…</h1>
         <p class="artist" id="artist"></p>
         <p class="album" id="album"></p>
+
+        <div class="actions" id="actions" hidden>
+          <button class="preview" id="preview-btn" type="button" hidden aria-pressed="false">
+            <span class="preview-glyph" aria-hidden="true"></span>
+            <span id="preview-text">试听 30 秒</span>
+          </button>
+          <a class="open-am" id="open-am" hidden target="_blank" rel="noopener noreferrer">
+            在 Apple Music 中打开<span class="arrow" aria-hidden="true">↗</span>
+          </a>
+        </div>
+
         <p class="stamp" id="stamp"></p>
+      </div>
+
+      <!-- aria-hidden: the highlighted line changes every couple of seconds,
+           and a live region announcing each one would talk over everything
+           else on the page. The song title above is the useful announcement. -->
+      <div class="lyrics" id="lyrics" hidden aria-hidden="true">
+        <div class="lyrics-track" id="lyrics-track"></div>
       </div>
     </main>
 
@@ -660,8 +909,12 @@ var Mesh = (function () {
   'use strict';
 
   // 数据源：本机常驻程序把当前播放状态推到这里，本页每隔几秒拉一次。
-  // 换数据源只改这一行。
-  var API = 'https://nowplaying-relay.shize-879.workers.dev/now';
+  // 换数据源只改这一行（写到 /now 之前为止，不带结尾斜杠）。
+  var API = 'https://nowplaying-relay.shize-879.workers.dev';
+  var NOW_URL = API + '/now';
+  // 歌词单独一个接口：它只在换歌时变，而 /now 是每 3 秒拉一次的——
+  // 把一首歌几十 KB 的逐字歌词塞进去，等于每分钟给每个看的人重发二十遍。
+  var LYRICS_URL = API + '/lyrics?id=';
 
   var POLL_MS = 3000;
   // 超过这个时长没有新上报，就认为对面的电脑关机/断网了，不再把
@@ -680,6 +933,12 @@ var Mesh = (function () {
     album: document.getElementById('album'),
     status: document.getElementById('status-text'),
     stamp: document.getElementById('stamp'),
+    lyrics: document.getElementById('lyrics'),
+    lyricsTrack: document.getElementById('lyrics-track'),
+    actions: document.getElementById('actions'),
+    previewBtn: document.getElementById('preview-btn'),
+    previewText: document.getElementById('preview-text'),
+    openAm: document.getElementById('open-am'),
     themeColor: document.querySelector('meta[name="theme-color"]')
   };
 
@@ -868,6 +1127,324 @@ var Mesh = (function () {
     if (meshOn && p.mesh) Mesh.setPalette(p.mesh);
   }
 
+  /* ---------- 播放进度 ---------- */
+
+  /* 歌词要跟着唱，就得知道"此刻播到第几秒"。
+     中转站给两样东西：推上来时播到了第几毫秒，以及这条记录是多久之前推的。
+     两个一加就是此刻的位置——中间由本页自己走秒，每次取数再校准一次，
+     所以既不依赖两台电脑的时钟对得上，也不用为了跟拍去疯狂拉接口。 */
+  var head = { posMs: 0, durMs: 0, baseAt: 0, playing: false, known: false };
+
+  function setHead(raw, rttMs) {
+    if (!raw || !raw.title || typeof raw.positionMs !== 'number') {
+      head.known = false;
+      return;
+    }
+    head.known = true;
+    head.posMs = raw.positionMs;
+    head.durMs = raw.durationMs || 0;
+    head.playing = raw.state === 'playing';
+    // 减掉半个来回：ageMs 是中转站生成这次回包时算的，回包在路上还要走一段，
+    // 不扣掉的话每句歌词都会稳定慢这么多。
+    head.baseAt = Date.now() - (raw.ageMs || 0) - rttMs / 2;
+  }
+
+  function headMs() {
+    if (!head.known) return -1;
+    if (!head.playing) return head.posMs;      // 暂停时进度就停在那儿
+    var t = head.posMs + (Date.now() - head.baseAt);
+    if (head.durMs > 0 && t > head.durMs) t = head.durMs;
+    return t;
+  }
+
+  /* ---------- 歌词 ---------- */
+
+  var Lyric = (function () {
+    var FRAME_MS = 1000 / 30;     // 逐字点亮，30 帧足够顺，再高看不出来
+    var CENTER = 0.42;            // 当前句停在窗口偏上一点，给下一句留出预读空间
+
+    var data = null;
+    var lineEls = [], wordEls = [], centers = [];
+    var activeIdx = -1;
+    var loadedId = null, pendingId = null;
+    var raf = 0, lastDraw = 0, running = false;
+
+    function hide() {
+      data = null;
+      loadedId = null;
+      lineEls = []; wordEls = []; centers = [];
+      activeIdx = -1;
+      stop();
+      el.lyricsTrack.textContent = '';
+      el.lyrics.hidden = true;
+      el.np.classList.remove('has-lyrics');
+    }
+
+    function build() {
+      el.lyricsTrack.textContent = '';
+      lineEls = []; wordEls = [];
+      var frag = document.createDocumentFragment();
+
+      data.lines.forEach(function (line, i) {
+        var p = document.createElement('p');
+        p.className = 'lyric-line';
+
+        if (line.w && line.w.length) {
+          var spans = [];
+          line.w.forEach(function (w) {
+            var s = document.createElement('span');
+            s.className = w.bg ? 'lyric-w bg' : 'lyric-w';
+            s.textContent = w.w;
+            p.appendChild(s);
+            spans.push(s);
+          });
+          wordEls[i] = spans;
+        } else {
+          p.appendChild(document.createTextNode(line.x));
+          wordEls[i] = null;
+        }
+
+        if (line.tr) {
+          var tr = document.createElement('span');
+          tr.className = 'lyric-tr';
+          tr.textContent = line.tr;
+          p.appendChild(tr);
+        }
+
+        frag.appendChild(p);
+        lineEls.push(p);
+      });
+
+      el.lyricsTrack.appendChild(frag);
+      el.lyrics.hidden = false;
+      el.np.classList.add('has-lyrics');
+      activeIdx = -1;
+      measure();
+      start();
+    }
+
+    // 行的位置要在布局定下来之后量。加了 has-lyrics 之后整页会重新排版，
+    // 封面尺寸和列宽都变了，量早了会全部偏掉。
+    function measure() {
+      centers = lineEls.map(function (p) { return p.offsetTop + p.offsetHeight / 2; });
+    }
+
+    function indexAt(ms) {
+      if (!data || ms < 0) return -1;
+      var s = ms / 1000, lo = 0, hi = data.lines.length - 1, found = -1;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (data.lines[mid].t <= s) { found = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      return found;
+    }
+
+    function setActive(idx) {
+      for (var i = 0; i < lineEls.length; i++) {
+        var cls = 'lyric-line';
+        if (i === idx) cls += ' active';
+        else if (i < idx) cls += ' past';
+        if (lineEls[i].className !== cls) lineEls[i].className = cls;
+      }
+      // 前奏还没开始唱时不要把第一句顶到中间，让它自然待在原位
+      var target = idx < 0 ? 0 : centers[idx] - el.lyrics.clientHeight * CENTER;
+      el.lyricsTrack.style.transform = 'translateY(' + (-Math.max(0, target)).toFixed(1) + 'px)';
+    }
+
+    function fill(idx, ms) {
+      var spans = wordEls[idx];
+      if (!spans) return;
+      var words = data.lines[idx].w, s = ms / 1000;
+      for (var i = 0; i < words.length; i++) {
+        var w = words[i], pct;
+        if (s >= w.e) pct = 100;
+        else if (s <= w.t) pct = 0;
+        else pct = ((s - w.t) / Math.max(0.001, w.e - w.t)) * 100;
+        pct = Math.round(pct);
+        // 只在真的变了才写 DOM——不然每帧都在给一整行重设样式
+        if (spans[i]._p !== pct) {
+          spans[i]._p = pct;
+          spans[i].style.setProperty('--p', pct + '%');
+        }
+      }
+    }
+
+    function update() {
+      var ms = headMs();
+      if (ms < 0) return;
+      var idx = indexAt(ms);
+      if (idx !== activeIdx) {
+        activeIdx = idx;
+        setActive(idx);
+      }
+      if (idx >= 0 && data.word) fill(idx, ms);
+    }
+
+    function frame(ts) {
+      raf = 0;
+      if (!running || !data) return;
+      if (ts - lastDraw >= FRAME_MS) {
+        lastDraw = ts;
+        update();
+      }
+      raf = requestAnimationFrame(frame);
+    }
+
+    function start() {
+      if (!data || running) return;
+      running = true;
+      lastDraw = 0;
+      update();                       // 立刻定位一次，不等下一帧
+      raf = requestAnimationFrame(frame);
+    }
+
+    function stop() {
+      running = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    }
+
+    return {
+      // 换歌了：先把旧歌词撤掉，再去取新的。撤掉这一步不能省——
+      // 否则新歌的前几秒会挂着上一首的词。
+      want: function (id) {
+        if (!id) { hide(); return; }
+        if (id === loadedId || id === pendingId) return;
+        hide();
+        pendingId = id;
+        fetch(LYRICS_URL + encodeURIComponent(id), { cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+          .then(function (l) {
+            if (pendingId !== id) return;      // 又换歌了，这份已经没用了
+            pendingId = null;
+            if (l && l.lines && l.lines.length) {
+              data = l;
+              loadedId = id;
+              build();
+            }
+          })
+          .catch(function () {
+            // 取不到就当这首没歌词：页面回到没有歌词的排版，不留空框
+            if (pendingId === id) pendingId = null;
+          });
+      },
+      hide: hide,
+      // 暂停时停掉每帧刷新，但保留画面——歌词该停在唱到的那个字上
+      setPlaying: function (on) { if (on) start(); else { stop(); update(); } },
+      resume: function () { if (data) start(); },
+      pause: stop,
+      remeasure: function () { if (data) { measure(); setActive(activeIdx); } }
+    };
+  })();
+
+  /* ---------- 试听 / 去 Apple Music 听 ---------- */
+
+  /* 打开这个页面的人只能看，听不到——正在放的那份音频属于石泽那台电脑上的
+     Apple Music，网页拿不到。这里给的是两件真能做到的事：
+       · 苹果对所有人公开的 30 秒片段（不用登录）
+       · 跳到对方自己的 Apple Music 听完整版
+     试听片段是苹果定好的固定 30 秒，跟当前播到第几秒无关，所以按钮上写清
+     "试听"，别让人以为是在跟着一起听。 */
+
+  var Preview = (function () {
+    // 从点下去到真的出声，中间要下载几百 KB，可能几百毫秒也可能一直卡着。
+    // 这段时间按钮必须有明确状态，否则会出两个毛病：一是看着像没反应，
+    // 二是用户再点一下，代码以为还没开始播，于是又发一次播放请求——
+    // 点第二下本该停，结果变成重播。
+    var IDLE = 0, LOADING = 1, PLAYING = 2;
+    var LOAD_LIMIT_MS = 9000;   // 超过这个还没出声，就认账说放不了
+
+    var audio = null;
+    var url = null;
+    var phase = IDLE;
+    var watchdog = null;
+
+    function make() {
+      if (audio) return audio;
+      audio = new Audio();
+      audio.preload = 'none';
+      // 以 playing 事件为准，而不是 play() 的返回值：真正开始出声的那一刻
+      // 是这个事件，play() 的 promise 在某些情况下会一直不落地。
+      audio.addEventListener('playing', function () {
+        clearWatchdog();
+        phase = PLAYING;
+        el.previewBtn.classList.add('on');
+        el.previewBtn.setAttribute('aria-pressed', 'true');
+      });
+      audio.addEventListener('timeupdate', function () {
+        if (phase !== PLAYING || !audio.duration) return;
+        var left = Math.max(0, Math.ceil(audio.duration - audio.currentTime));
+        el.previewBtn.style.setProperty('--pv', (audio.currentTime / audio.duration * 100).toFixed(1) + '%');
+        el.previewText.textContent = '试听中 · 剩 ' + left + ' 秒';
+      });
+      audio.addEventListener('ended', function () { stop(); });
+      audio.addEventListener('error', function () { fail(); });
+      return audio;
+    }
+
+    function clearWatchdog() {
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    }
+
+    function paint(label) {
+      el.previewBtn.classList.toggle('on', phase === PLAYING);
+      el.previewBtn.setAttribute('aria-pressed', phase === PLAYING ? 'true' : 'false');
+      el.previewText.textContent = label;
+    }
+
+    function stop() {
+      clearWatchdog();
+      if (audio) { audio.pause(); try { audio.currentTime = 0; } catch (e) {} }
+      phase = IDLE;
+      el.previewBtn.style.setProperty('--pv', '0%');
+      paint('试听 30 秒');
+    }
+
+    // 放不了就直说。之前的写法是静静地什么都不做，按钮变成一个死键。
+    function fail() {
+      clearWatchdog();
+      if (audio) audio.pause();
+      phase = IDLE;
+      el.previewBtn.style.setProperty('--pv', '0%');
+      paint('试听加载不出来');
+    }
+
+    el.previewBtn.addEventListener('click', function () {
+      if (!url) return;
+      if (phase !== IDLE) { stop(); return; }   // 加载中再点也算取消
+      var a = make();
+      if (a.src !== url) a.src = url;
+      phase = LOADING;
+      paint('载入中…');
+      clearWatchdog();
+      watchdog = setTimeout(function () { if (phase === LOADING) fail(); }, LOAD_LIMIT_MS);
+      var p = a.play();
+      if (p && p.catch) p.catch(function () { if (phase === LOADING) fail(); });
+    });
+
+    return {
+      // 换歌就立刻停掉——上一首的副歌继续放着，比不能听还怪
+      set: function (previewUrl, link) {
+        if ((previewUrl || null) !== url) {
+          stop();
+          url = previewUrl || null;
+          if (audio) audio.removeAttribute('src');
+        }
+        el.previewBtn.hidden = !url;
+        el.openAm.hidden = !link;
+        if (link) el.openAm.href = link;
+        el.actions.hidden = !url && !link;
+      },
+      clear: function () {
+        stop();
+        url = null;
+        el.actions.hidden = true;
+        el.previewBtn.hidden = true;
+        el.openAm.hidden = true;
+      }
+    };
+  })();
+
   /* ---------- 渲染 ---------- */
 
   // 中转站返回的是"这条记录多久之前推上来的"，而不是一个绝对时间戳——
@@ -906,11 +1483,16 @@ var Mesh = (function () {
     el.wash.style.backgroundImage = '';
     applyPalette(null);
     Mesh.setIdle(true);
+    Lyric.hide();
+    Preview.clear();
   }
 
   function paintTrack(d) {
     el.np.setAttribute('data-state', d.state === 'paused' ? 'paused' : 'playing');
     Mesh.setIdle(false);
+    Lyric.want(d.lyricsId);
+    Lyric.setPlaying(d.state === 'playing');
+    Preview.set(d.preview, d.link);
     el.status.textContent = d.state === 'paused' ? '已暂停' : '正在播放';
     el.title.textContent = d.title;
     el.artist.textContent = d.artist || '';
@@ -1000,11 +1582,15 @@ var Mesh = (function () {
   }
 
   function poll() {
-    fetch(API, { cache: 'no-store' })
+    var sentAt = Date.now();
+    fetch(NOW_URL, { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
       .then(function (raw) {
         lastData = normalize(raw);
         fetchedAt = Date.now();
+        // 每次取数都重新校准一次进度，所以就算本页自己走秒走偏了，
+        // 最多偏三秒就被拉回来。
+        setHead(lastData, fetchedAt - sentAt);
         render(lastData);
       })
       .catch(function () {
@@ -1026,8 +1612,16 @@ var Mesh = (function () {
 
   // 页面切到后台就停止轮询和动画，回到前台立刻恢复
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { stop(); Mesh.stop(); }
-    else { start(); if (meshOn) Mesh.start(); }
+    if (document.hidden) { stop(); Mesh.stop(); Lyric.pause(); }
+    else { start(); if (meshOn) Mesh.start(); Lyric.resume(); }
+  });
+
+  // 窗口大小一变，行的位置就全变了——不重新量的话当前句会停错地方。
+  // 拖动窗口时会连发很多次，所以压一下频率。
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { resizeTimer = null; Lyric.remeasure(); }, 180);
   });
 
   // Swaps the whole page between mesh and blurred-cover backgrounds. Called
