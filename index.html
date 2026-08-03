@@ -415,6 +415,8 @@
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
     letter-spacing: .02em;
+    /* 试听期间要淡出让位，不能啪一下消失 */
+    transition: opacity .35s ease;
   }
 
   /* --- listening ------------------------------------------------- */
@@ -425,6 +427,8 @@
      anyone, and a way into the visitor's own copy. */
 
   .actions {
+    /* 试听时按钮下面那句说明是绝对定位的，基准就在这里 */
+    position: relative;
     display: flex;
     align-items: center;
     gap: .9rem;
@@ -534,6 +538,8 @@
        the column reads as a window onto a longer song. */
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 80%, transparent 100%);
     mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 80%, transparent 100%);
+    /* 进出试听时整栏明暗要渐变，不能硬切 */
+    transition: opacity .45s ease;
   }
   .lyrics[hidden] { display: none; }
 
@@ -643,6 +649,81 @@
     .lyric-line { transition: none; }
   }
 
+  /* --- 试听中：把两条时间轴分开 ------------------------------------
+
+     访客点下试听后，耳朵里是苹果给所有人的固定 30 秒，眼睛看到的却是
+     石泽的实时进度在逐字滚歌词。那段片段从原曲第几秒切出来的，苹果的
+     公开接口、Music 自己用的内部接口、片段 m4a 文件本身的元数据里都
+     查不到（三处都直查过），所以"让歌词跟着片段走"做不到——能做的只有
+     让人一眼就不会把这两条时间轴看成一条。
+
+     把"耳朵听到的音节"和"眼睛看到的字"焊在一起的，是当前行那条逐字
+     点亮的渐变：它是音节级的、跟耳朵同频。整行上移是好几秒才发生一次
+     的动作，跟耳朵的节奏对不上号，本来就不像跟读，可以留着。所以这里
+     只关掉逐字点亮，不冻歌词——歌词继续跟着石泽走恰恰在说"这是另一个
+     人的、还在跑的东西"，冻住反而像页面卡了。
+
+     （提醒后来改这里的人：就算真要冻歌词，也别从 Lyric 模块里冻——
+     paintTrack 每三秒就调一次 Lyric.setPlaying，停掉的循环立刻又被
+     拉起来，现象是"代码看着对但就是不生效"。）
+
+     全部由 #np 上的一个 previewing class 驱动，JS 只管开关。 */
+
+  /* 关掉逐字填充：当前行从"跟着唱"变回"一行被高亮的字"。顺带把 color
+     还原成实色——平时那条规则把它设成 transparent、靠背景裁字上色，
+     实色回来之后深色投影就不会再从笔画里透出来，这一行反而更干净。 */
+  .np.previewing .lyric-line.active .lyric-w {
+    background-image: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: var(--text);
+  }
+  /* 放大是卡拉OK的另一半：当前行不该再有舞台感，看得出是它就够了。 */
+  .np.previewing .lyric-line.active { transform: none; }
+
+  /* 整栏退到背景。词还在跟着石泽走（那是诚实的），只是不再是主角。 */
+  .np.previewing .lyrics { opacity: .5; }
+
+  /* 石泽那条时间轴的署名。歌词和进度条读的是同一个时钟，标住进度条
+     就等于同时标住了歌词。不写 color：继承旁边两个时间戳的颜色——
+     accent 那个色留给访客真能碰的东西，也就是试听按钮。 */
+  .scrub-owner { display: none; }
+  .np.previewing .scrub-owner {
+    display: inline;
+    letter-spacing: .06em;
+  }
+
+  /* 按钮下方那句事实。绝对定位、不占布局高度：整页是裁切不是滚动，
+     窄屏本来就顶到边，多挤一行会把封面顶出画面。它正好落在"更新于
+     X 前"的位置上，而那行在试听期间是淡掉的，所以撞不上。 */
+  .preview-note {
+    display: none;
+    position: absolute;
+    top: calc(100% + .34rem);
+    left: 0;
+    right: 0;
+    font-size: .68rem;
+    line-height: 1.42;
+    letter-spacing: .01em;
+    color: var(--text-faint);
+  }
+  .np.previewing .preview-note { display: block; }
+  .mesh-on .preview-note { color: color-mix(in srgb, var(--text) 52%, var(--text-faint)); }
+
+  /* "更新于 X 前"让位：一来给上面那句话腾出干净的地方，二来它是石泽
+     那边又一个自己在跳的数字，这 30 秒里没人需要它。 */
+  .np.previewing .stamp { opacity: 0; }
+
+  /* 试听中按钮边框实一点——此刻页面上唯一该跑的时间轴是它。 */
+  .np.previewing .preview {
+    border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  }
+
+  /* 明暗渐变只是装饰，状态切换本身才是信息——减动效下直接切，信息不丢。 */
+  @media (prefers-reduced-motion: reduce) {
+    .lyrics, .stamp { transition: none; }
+  }
+
   /* --- idle state ------------------------------------------------ */
 
   [data-state="idle"] .sleeve { box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); }
@@ -699,6 +780,9 @@
           <div class="scrub-rail"><i class="scrub-fill" id="scrub-fill"></i></div>
           <div class="scrub-times">
             <span id="time-done">0:00</span>
+            <!-- 只在试听期间露面（纯 CSS 控制显隐）：给这条本来没主人的
+                 时间轴认领一下，免得它看起来像在为访客耳朵里的声音计时。 -->
+            <span class="scrub-owner">石泽的进度</span>
             <span id="time-left">−0:00</span>
           </div>
         </div>
@@ -711,6 +795,10 @@
           <a class="open-am" id="open-am" hidden target="_blank" rel="noopener noreferrer">
             在 Apple Music 中打开<span class="arrow" aria-hidden="true">↗</span>
           </a>
+          <!-- 试听中才出现：那 30 秒是苹果定死的片段，从原曲第几秒切的
+               连苹果自己的接口都不给，所以它和上面的进度、旁边的歌词
+               永远对不上。与其让人自己纳闷，不如平铺直叙讲一句。 -->
+          <span class="preview-note">苹果的固定片段，和石泽听到哪儿无关</span>
         </div>
 
         <p class="stamp" id="stamp"></p>
@@ -1530,6 +1618,7 @@ var Mesh = (function () {
     var url = null;
     var phase = IDLE;
     var watchdog = null;
+    var recover = null;           // 失败文案的自愈定时器，见 fail()
 
     function make() {
       if (audio) return audio;
@@ -1558,14 +1647,24 @@ var Mesh = (function () {
       if (watchdog) { clearTimeout(watchdog); watchdog = null; }
     }
 
+    function clearRecover() {
+      if (recover) { clearTimeout(recover); recover = null; }
+    }
+
     function paint(label) {
       el.previewBtn.classList.toggle('on', phase === PLAYING);
       el.previewBtn.setAttribute('aria-pressed', phase === PLAYING ? 'true' : 'false');
       el.previewText.textContent = label;
+      // 只要在试听（包括还在加载），整页就切到"两条时间轴分开"的样子：
+      // 歌词不再逐字点亮、退到背景，石泽那条进度署上名。样式全在 CSS 里，
+      // 这里只管开关。故意在"载入中"就切——点下去到真出声可能要好几秒，
+      // 那几秒正是最容易产生误会的时候，顺带也让"点了有反应"更明确。
+      el.np.classList.toggle('previewing', phase !== IDLE);
     }
 
     function stop() {
       clearWatchdog();
+      clearRecover();
       if (audio) { audio.pause(); try { audio.currentTime = 0; } catch (e) {} }
       phase = IDLE;
       el.previewBtn.style.setProperty('--pv', '0%');
@@ -1575,10 +1674,17 @@ var Mesh = (function () {
     // 放不了就直说。之前的写法是静静地什么都不做，按钮变成一个死键。
     function fail() {
       clearWatchdog();
+      clearRecover();
       if (audio) audio.pause();
       phase = IDLE;
       el.previewBtn.style.setProperty('--pv', '0%');
       paint('试听加载不出来');
+      // 过几秒自己变回去。不然按钮就永远停在这句话上——一个自称坏掉、
+      // 又不邀请你再试一次的键；而放不出来多半只是一次网络抖动。
+      recover = setTimeout(function () {
+        recover = null;
+        if (phase === IDLE) paint('试听 30 秒');
+      }, 3500);
     }
 
     el.previewBtn.addEventListener('click', function () {
@@ -1667,7 +1773,9 @@ var Mesh = (function () {
     Lyric.setPlaying(d.state === 'playing');
     Preview.set(d.preview, d.link);
     Scrub.paint();
-    el.status.textContent = d.state === 'paused' ? '已暂停' : '正在播放';
+    // 带上名字：这页是给别人看的，「正在播放」会被读成"我这边在播"。
+    // 一进页面就知道这是石泽的播放器，误会在产生之前就讲完了。
+    el.status.textContent = d.state === 'paused' ? '石泽已暂停' : '石泽正在听';
     el.title.textContent = d.title;
     el.artist.textContent = d.artist || '';
     el.album.textContent = d.album || '';
@@ -1711,13 +1819,18 @@ var Mesh = (function () {
   // 换歌时做一次淡出淡入；只是刷新时间戳就原地更新，避免整页闪一下。
   function render(d) {
     var key = d && d.title ? d.state + '|' + d.artist + '|' + d.title
+            : d && d.unreachable ? 'unreachable'
             : d && d.offline ? 'offline' : 'idle';
     var isNew = key !== shownKey;
     shownKey = key;
 
     var paint = function () {
       if (!d || !d.title) {
-        if (d && d.offline) paintIdle('离线', '这台电脑现在不在线');
+        // "连不上"和"离线"是两件事，必须分开说。离线是我们问到了答案、
+        // 答案是他那台电脑很久没上报了；连不上是我们连问都问不出去，
+        // 这时候说"这台电脑不在线"是在替一个查不到的事实作证。
+        if (d && d.unreachable) paintIdle('连不上', '取不到数据，可能是网络挡住了');
+        else if (d && d.offline) paintIdle('离线', '这台电脑现在不在线');
         else paintIdle('空闲', '现在没在听歌');
       } else {
         paintTrack(d);
@@ -1755,24 +1868,65 @@ var Mesh = (function () {
     return d;
   }
 
+  // 一次取数最多等这么久。fetch 自己没有超时，而网络挡一个地址有两种挡法：
+  // 干脆拒绝（请求立刻失败，页面会走到下面的失败分支），或者把包吞掉不回话
+  // ——后一种情况请求既不成功也不失败，就那么挂着。没有这个超时的话，页面
+  // 会永远停在最初那句"连接中"，看的人只知道它没反应，不知道为什么。
+  var FETCH_TIMEOUT_MS = 6000;
+  // 连续这么多次拿不到才认账。一次抖动不值得把画面换掉。
+  var UNREACHABLE_AFTER = 2;
+
+  var failStreak = 0;
+  var everLoaded = false;
+
   function poll() {
     var sentAt = Date.now();
-    fetch(NOW_URL, { cache: 'no-store' })
+    var settled = false;
+    var ctl = window.AbortController ? new AbortController() : null;
+
+    function finish(ok, run) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(giveUp);
+      failStreak = ok ? 0 : failStreak + 1;
+      run();
+    }
+
+    var giveUp = setTimeout(function () {
+      finish(false, function () {
+        // 取消得掉就取消，取消不掉（老浏览器没有 AbortController）也不再
+        // 等它——那个请求就算最后回来了，下一轮取数早已覆盖掉它的结果。
+        if (ctl) ctl.abort();
+        failed();
+      });
+    }, FETCH_TIMEOUT_MS);
+
+    // 拉不到就先保持上一次的画面，时间戳继续自己走——一次网络抖动不该
+    // 让整页变成"没在听歌"。等到连上一次的画面都过期了，才换成"连不上"。
+    function failed() {
+      lastData = expire(lastData);
+      var stuck = failStreak >= UNREACHABLE_AFTER && (!lastData || !lastData.title);
+      if (stuck) { render({ unreachable: true }); return; }
+      // 从头到尾一次都没问到过，就还停在"连接中"——这时候说"现在没在听歌"
+      // 是在替一个我们根本没拿到的答案作证，而且它和真的空闲长得一模一样。
+      if (!everLoaded) return;
+      render(lastData);
+    }
+
+    fetch(NOW_URL, ctl ? { cache: 'no-store', signal: ctl.signal } : { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
       .then(function (raw) {
-        lastData = normalize(raw);
-        fetchedAt = Date.now();
-        // 每次取数都重新校准一次进度，所以就算本页自己走秒走偏了，
-        // 最多偏三秒就被拉回来。
-        setHead(lastData, fetchedAt - sentAt);
-        render(lastData);
+        finish(true, function () {
+          everLoaded = true;
+          lastData = normalize(raw);
+          fetchedAt = Date.now();
+          // 每次取数都重新校准一次进度，所以就算本页自己走秒走偏了，
+          // 最多偏三秒就被拉回来。
+          setHead(lastData, fetchedAt - sentAt);
+          render(lastData);
+        });
       })
-      .catch(function () {
-        // 拉不到就保持上一次的画面，时间戳继续自己走——
-        // 一次网络抖动不该让整页变成"没在听歌"。但超过阈值就必须认账。
-        lastData = expire(lastData);
-        render(lastData);
-      });
+      .catch(function () { finish(false, failed); });
   }
 
   function start() {
