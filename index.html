@@ -552,10 +552,18 @@
     right: 0;
     top: 0;
     will-change: transform;
-    /* 曲线末尾越过 1 再收回来，整栏停下时带一下极轻的回弹——像被推过去
-       之后自己坐定，而不是被拖到位就硬停。幅度压得很小：歌词是拿来读的，
-       晃一下就从"有质感"变成"看不清"。 */
-    transition: transform .66s cubic-bezier(.22, .98, .28, 1.03);
+    /* 走的是弹簧，不是随手挑的一条缓动曲线。
+       linear() 里那串数字是把一个真实的阻尼弹簧（劲度 130、阻尼 21）从
+       松手到停稳采样出来的位移——所以它的快慢分布跟一个被拉住又放开的
+       东西完全一样：起步慢、中段冲、末尾自己收住。手挑的贝塞尔只能凑出
+       形状相近的曲线，凑不出这种"有质量"的手感。
+       这一条特意调到刚好不过冲：整栏字来回晃是要人命的，读都读不了。
+       上面那条贝塞尔是给不认识 linear() 的旧浏览器留的近似，下面这条
+       认得的浏览器会覆盖掉它。 */
+    transition-property: transform;
+    transition-duration: .526s;
+    transition-timing-function: cubic-bezier(.25, .78, .3, 1);
+    transition-timing-function: linear(0, 0.014, 0.0502, 0.1015, 0.1624, 0.2285, 0.2968, 0.3647, 0.4307, 0.4934, 0.5521, 0.6065, 0.6561, 0.7011, 0.7416, 0.7776, 0.8096, 0.8377, 0.8624, 0.8838, 0.9024, 0.9184, 0.9321, 0.9438, 0.9538, 0.9622, 0.9693, 0.9752, 0.9802, 0.9843, 0.9877, 0.9904, 0.9927, 0.9945, 1);
   }
 
   /* --d is how many lines away from the one being sung this is, written by
@@ -601,11 +609,14 @@
     /* --sd 是"排在当前句后面第几行"，由 setActive 写进来。乘出来的这点
        延迟让换行时下面的行依次跟上，而不是整栏齐刷刷地变——滚动时那道
        波浪就是这么来的。当前句自己是 0，永远第一个动。
-       transform 用的曲线末端越过 1：那一句是"弹"出来的，不是"推"出来的。 */
-    transition:
-      opacity .5s ease calc(var(--sd) * 30ms),
-      filter .5s ease calc(var(--sd) * 30ms),
-      transform .58s cubic-bezier(.32, 1.34, .5, 1) calc(var(--sd) * 30ms);
+       大小变化走的也是弹簧（劲度 300、阻尼 21），跟整栏滚动同一套算法，
+       只是这条特意留了九个点的过冲：那一句要"弹"出来，不是"推"出来。
+       明暗和虚化不跟弹簧走——亮度来回过冲会像在闪。 */
+    transition-property: opacity, filter, transform;
+    transition-duration: .5s, .5s, .526s;
+    transition-delay: calc(var(--sd) * 30ms);
+    transition-timing-function: ease, ease, cubic-bezier(.32, 1.34, .5, 1);
+    transition-timing-function: ease, ease, linear(0, 0.0321, 0.1143, 0.2276, 0.3565, 0.4889, 0.6157, 0.7307, 0.8303, 0.9125, 0.9773, 1.0255, 1.0588, 1.0793, 1.0892, 1.091, 1.0867, 1.0784, 1.0675, 1.0556, 1.0436, 1.0323, 1.0221, 1.0134, 1.0063, 1.0008, 0.9968, 0.9941, 0.9925, 0.9918, 0.9918, 0.9923, 0.9931, 0.9941, 1);
     overflow-wrap: anywhere;
   }
   /* Sung lines recede a little further than upcoming ones — the eye should
@@ -643,7 +654,14 @@
     color: var(--text-dim);
   }
 
-  /* The syllable fill. Each word paints a hard-edged gradient clipped to
+  /* 每个音节是一个独立的盒子。行内的文字片段没法被单独位移或缩放——浏览器
+     只认盒子，所以要让一个字自己弹一下，它就得先是个盒子。代价是一个音节
+     内部不再能断行：中文按字切，本来就断不了；英文的词长到顶不下的时候，
+     词内断行仍然可用（overflow-wrap 是继承下来的），只是那种词在歌词里
+     基本不出现。 */
+  .lyric-w { display: inline-block; }
+
+  /* The syllable fill. Each word paints a gradient clipped to
      its own glyphs, and --p walks the edge across as that syllable is sung.
      Only the active line's words carry it, so a whole song's worth of
      spans isn't being repainted every frame.
@@ -658,11 +676,18 @@
      单独处理，理由写在上面 .lyric-line.active 那条里。
 
      四成出头：这条边界是当前行内部唯一的进度指示，两边差得越开，"唱到
-     哪儿了"越是一眼可见，不用盯着找。 */
+     哪儿了"越是一眼可见，不用盯着找。
+
+     边界本身不是一刀切，是三分之一个字宽的过渡，最亮的一点压在正在唱的
+     位置上——嘴里的音是滑过去的，不是一格一格跳的，硬边界看着像进度条，
+     软边界才像人在唱。宽度用 em 跟着字号走：中文一个字就是一个音节，这
+     道过渡差不多罩住整个字；英文一个词好几个字宽，同样的宽度在上面就成
+     了一道扫过去的光。 */
   .lyric-line.active .lyric-w {
     background-image: linear-gradient(90deg,
-      var(--text) 0 var(--p, 0%),
-      color-mix(in srgb, var(--text) 44%, transparent) var(--p, 0%) 100%);
+      var(--text) 0 calc(var(--p, 0%) - .16em),
+      #fff calc(var(--p, 0%) - .02em),
+      color-mix(in srgb, var(--text) 44%, transparent) calc(var(--p, 0%) + .14em) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -1492,6 +1517,17 @@ var Mesh = (function () {
     var FAR = 5;                  // 超过这么远就已经在窗口外了，不再花代价去虚化
     var STAGGER_MAX = 6;          // 波浪最多往下传这么多行，再远的延迟只剩滞后感
 
+    // 一个字被唱到时弹的那一下，分两段：上去是发力，用普通的缓出；回来是
+    // 撒手，用弹簧——它会冲过原位再荡回来，那点余荡就是"弹"的来源。
+    // 弹簧那串数字跟 CSS 里两条是同一套算法采出来的（劲度 520、阻尼 24），
+    // 这条特意留了一成四的过冲，比整行放大那条还跳，因为它只有一个字大，
+    // 幅度不夸张就看不见。
+    var RISE = 'cubic-bezier(.2, .8, .4, 1)';
+    var SPRING_HIT = (window.CSS && CSS.supports && CSS.supports('animation-timing-function', 'linear(0, 1)'))
+      ? 'linear(0, 0.0425, 0.1505, 0.2971, 0.4597, 0.6208, 0.7678, 0.8928, 0.9918, 1.064, 1.111, 1.136, 1.1431, 1.1367, 1.121, 1.1, 1.0767, 1.0536, 1.0327, 1.0149, 1.0008, 0.9906, 0.984, 0.9805, 0.9795, 0.9805, 0.9828, 0.9858, 0.9891, 0.9924, 0.9954, 0.9979, 0.9999, 1.0014, 1)'
+      : 'cubic-bezier(.34, 1.42, .5, 1)';
+    var calmer = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+
     var data = null;
     var lineEls = [], wordEls = [], centers = [];
     var activeIdx = -1;
@@ -1549,7 +1585,20 @@ var Mesh = (function () {
       el.np.classList.add('has-lyrics');
       activeIdx = -1;
       measure();
+      enter();
       start();
+    }
+
+    // 换歌时词一行行浮上来，而不是整块砸在脸上。只做窗口里看得见的那十几
+    // 行——再往下的行此刻在画面外，动它是白费力气。
+    // backwards 是关键：没有它，每行会先按正常样子显示着，等轮到自己才突然
+    // 消失再淡入，看着像闪了一下。
+    function enter() {
+      if (calmer.matches || !lineEls.length || !lineEls[0].animate) return;
+      for (var i = 0; i < lineEls.length && i < 14; i++) {
+        lineEls[i].animate([{ opacity: 0 }],
+          { duration: 460, delay: i * 34, easing: 'ease-out', fill: 'backwards' });
+      }
     }
 
     // 行的位置要在布局定下来之后量。加了 has-lyrics 之后整页会重新排版，
@@ -1598,6 +1647,26 @@ var Mesh = (function () {
       el.lyricsTrack.style.transform = 'translateY(' + (-Math.max(0, target)).toFixed(1) + 'px)';
     }
 
+    // 唱到一个字时它自己弹的那一下。用 Web Animations 而不是挂一个 CSS
+    // 类：同一个字在一首歌里可能被唱到不止一次（重播、拖进度条），CSS
+    // 动画要重放得先摘类、强制重排、再挂回去；这里每次直接起一个新的，
+    // 放完自己结束，什么都不用收拾。
+    function bounce(span, w) {
+      if (!span.animate || calmer.matches) return;   // 不弹也不影响读，字照常点亮
+      // 这一下有多长，就照这个音节唱多久来。两头夹住：太短的字弹起来看不
+      // 见，拖腔再长也不该一个字演上两秒。
+      var ms = Math.max(300, Math.min(1000, (w.e - w.t) * 1000));
+      // 三段：鼓起来、鼓着、落回去。中间那段是给拖长音准备的——短促的字
+      // 三段挤在三百毫秒里就是干脆的一下，拖腔的字则会明显地鼓着不放，
+      // 跟耳朵里那个音一样长。落回那段走弹簧，会略微沉过原位再荡上来。
+      span.animate([
+        { transform: 'none', easing: RISE },
+        { transform: 'translateY(-.075em) scale(1.075)', offset: .3, easing: 'ease-in-out' },
+        { transform: 'translateY(-.05em) scale(1.05)', offset: .68, easing: SPRING_HIT },
+        { transform: 'none' }
+      ], { duration: ms });
+    }
+
     function fill(idx, ms) {
       var spans = wordEls[idx];
       if (!spans) return;
@@ -1612,6 +1681,12 @@ var Mesh = (function () {
         if (spans[i]._p !== pct) {
           spans[i]._p = pct;
           spans[i].style.setProperty('--p', pct + '%');
+          // 刚开口唱到这个字的那一帧，弹一下。这个字接下来每帧都还在被
+          // 重画，但弹只该弹一次，所以拿一个标记卡住；退回 0 说明时间倒
+          // 回去了（换歌、拖进度），把标记清掉，下次唱到还能再弹。
+          if (pct > 0) {
+            if (!spans[i]._hit) { spans[i]._hit = 1; bounce(spans[i], w); }
+          } else spans[i]._hit = 0;
         }
       }
     }
