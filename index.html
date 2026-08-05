@@ -574,11 +574,17 @@
   .lyric-line {
     --d: 5;
     --sd: 0;
+    /* 背景亮起来的时候垫在字底下的那层暗。写成变量是因为下面有三条规则要
+       在"用它 / 不用它 / 又用回它"之间切，值只该有一个地方说了算。 */
+    --lyric-shade: 0 1px 16px rgba(0, 0, 0, .5);
     margin: 0;
-    /* 右边这道空当是给放大让位的。当前那句会横向撑到 106%，而这一栏是裁切
-       不是滚动——不留的话，顶满宽度的长句放大后最后几个字母正好被切在边上。
-       百分比略大于 1 - 1/1.06，留一点余量；跟着放大值走，改一个要改另一个。 */
-    padding: .56em 6% .56em 0;
+    /* 右边这道空当是给放大让位的。当前那句会横向撑出去，而这一栏是裁切不是
+       滚动——不留的话，顶满宽度的长句放大后最后几个字母正好被切在边上。
+       百分比略大于 1 - 1/放大倍数，留一点余量；跟着放大值走，改一个要改
+       另一个。也正因为要留的宽度是跟着放大倍数涨的，当前句和邻句的大小差
+       主要靠"把邻句缩下去"拉开，而不是一味把当前句放大——同样的对比，
+       占的宽度小得多。 */
+    padding: .56em 11% .56em 0;
     font-size: clamp(1.08rem, 2.3vw, 1.72rem);
     font-weight: 700;
     line-height: 1.34;
@@ -589,7 +595,7 @@
        是从这个斜面上鼓出来的，而不是一列平字里被点亮的一行。
        用 scale 而不是改字号：改字号会让下面每一行重新排版，而滚动用的
        每行位置是提前量好的，一重排就全偏。 */
-    transform: scale(calc(1 - var(--d) * .013));
+    transform: scale(calc(1 - var(--d) * .05));
     transform-origin: left center;
     filter: blur(calc(var(--d) * .08em)) drop-shadow(0 0 0 transparent);
     /* --sd 是"排在当前句后面第几行"，由 setActive 写进来。乘出来的这点
@@ -607,16 +613,17 @@
   .lyric-line.past { opacity: calc(.46 - var(--d) * .08); }
   .lyric-line.active {
     opacity: 1;
-    transform: scale(1.06);
-    /* 唱到的字自己发一点光。用 drop-shadow 而不是 text-shadow：前者照的是
-       这一行最终画出来的样子——也就是被逐字渐变裁过之后的结果，所以已经
-       唱过的那半才有光晕，还没唱到的那半是暗的、照不出什么东西来。
-       text-shadow 做不到这件事，它照的是字的轮廓，整行会一起亮，逐字点亮
-       的层次就没了。
+    transform: scale(1.12);
+    /* 这一行的暗底走 drop-shadow，不走下面那条给其它行用的 text-shadow。
+       两者的区别在半透明的字上：text-shadow 是照着字的轮廓画一份满强度的
+       暗影，字只要不是全实心，那份暗影就从笔画里透出来，字看着"白里带黑"
+       一片脏；drop-shadow 照的是这一行画完之后的样子，暗影的浓淡跟着像素
+       本身的透明度走——半透明的字配淡影，实心的字配足影，脏不起来。
+       这一行的字有一半是半透明的（见下面逐字填充那条），所以只能用后者。
        写成 blur(0) 是为了跟上一条的滤镜列表逐项对齐——个数和顺序一致，
        浏览器才肯在两者之间做过渡；只写 drop-shadow 一项就对不上了，
        虚化会从"化开"变成"跳一下"。 */
-    filter: blur(0) drop-shadow(0 0 14px color-mix(in srgb, var(--text) 30%, transparent));
+    filter: blur(0) drop-shadow(0 1px 12px rgba(0, 0, 0, .5));
     /* 当前句不排队。别的行等它先动完再依次跟上，它自己是这一波的起点。 */
     transition-delay: 0s;
   }
@@ -641,19 +648,21 @@
      Only the active line's words carry it, so a whole song's worth of
      spans isn't being repainted every frame.
 
-     Both ends of the gradient must be fully opaque. The line carries a dark
-     text-shadow for contrast, and a shadow sits *behind* the glyph — so a
-     half-transparent one lets that shadow show through its own strokes, and
-     the un-sung words come out looking grubby, white with black in them
-     rather than simply dimmer. Mixing toward the page colour instead of
-     toward transparent gives the same dimming with nothing behind to leak.
+     还没唱到的那半是半透明的白，不是掺了页面底色调暗的白。这两种写法在
+     黑底上看不出区别，在背景亮起来的时候差得很远：掺黑得到的是一个固定的
+     深灰，背景一亮，它就成了比背景还暗的一块脏色，跟旁边亮白的字凑在一起
+     格外难看；半透明的白永远比它后面的东西亮一点，背景暗它就淡、背景亮它
+     就浅，始终是"同一句话里较轻的那半"。这一栏底下是会自己变色的背景，
+     亮到什么程度事先不知道，所以只能用后一种。
+     代价是半透明的字挡不住身后的暗影——所以这一行的暗底改用 drop-shadow
+     单独处理，理由写在上面 .lyric-line.active 那条里。
 
-     未唱那半压到四成：这条边界是当前行内部唯一的进度指示，两边差得越开，
-     "唱到哪儿了"越是一眼可见，不用盯着找。 */
+     四成出头：这条边界是当前行内部唯一的进度指示，两边差得越开，"唱到
+     哪儿了"越是一眼可见，不用盯着找。 */
   .lyric-line.active .lyric-w {
     background-image: linear-gradient(90deg,
       var(--text) 0 var(--p, 0%),
-      color-mix(in srgb, var(--text) 40%, var(--ground)) var(--p, 0%) 100%);
+      color-mix(in srgb, var(--text) 44%, transparent) var(--p, 0%) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -676,8 +685,11 @@
      around every stroke, and lyrics in a player should be clean type on a
      blurred field. */
   .mesh-on .lyric-line {
-    text-shadow: 0 1px 16px rgba(0, 0, 0, .5);
+    text-shadow: var(--lyric-shade);
   }
+  /* 当前那一行不要这份。它的字有一半是半透明的，满强度的暗影会从笔画里
+     透出来；它自己的暗底由 drop-shadow 给，两份叠在一起只会更糊。 */
+  .mesh-on .lyric-line.active { text-shadow: none; }
 
   /* Nothing here is information — it's the same words either way — so an
      animation-sensitive reader gets them without the travel. */
@@ -707,16 +719,21 @@
      全部由 #np 上的一个 previewing class 驱动，JS 只管开关。 */
 
   /* 关掉逐字填充：当前行从"跟着唱"变回"一行被高亮的字"。顺带把 color
-     还原成实色——平时那条规则把它设成 transparent、靠背景裁字上色，
-     实色回来之后深色投影就不会再从笔画里透出来，这一行反而更干净。 */
+     还原成实色——平时那条规则把它设成 transparent、靠背景裁字上色。
+     变回实色这件事下一条要用到：实心的字挡得住身后的暗影，暗底才能从
+     drop-shadow 换回跟其它行一样的 text-shadow。 */
   .np.previewing .lyric-line.active .lyric-w {
     background-image: none;
     -webkit-background-clip: border-box;
     background-clip: border-box;
     color: var(--text);
   }
-  /* 放大和发光是卡拉OK的另一半：当前行不该再有舞台感，看得出是它就够了。 */
+  /* 放大是卡拉OK的另一半：当前行不该再有舞台感，看得出是它就够了。 */
   .np.previewing .lyric-line.active { transform: none; filter: none; }
+  /* 上一条把 filter 一起撤了，这一行的暗底本来就在里头，得补回来。此刻它
+     已经变回实色（见上面那条改 color 的规则），所以补的是跟其它行一样的
+     那份 text-shadow——drop-shadow 是给半透明的字准备的，这里用不上。 */
+  .mesh-on .np.previewing .lyric-line.active { text-shadow: var(--lyric-shade); }
 
   /* 整栏退到背景。词还在跟着石泽走（那是诚实的），只是不再是主角。 */
   .np.previewing .lyrics { opacity: .5; }
