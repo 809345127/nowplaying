@@ -661,6 +661,13 @@
   /* Backing vocals — the "(what can I do?)" behind the lead line. */
   .lyric-w.bg { font-size: .84em; opacity: .78; }
 
+  /* 当前句的翻译。正文里还没唱到的字已经压到四成，翻译再用原来的颜色就会
+     比正文本身更抢眼——次要的东西不该压过主要的。压到跟未唱那半相当，
+     略高一点是因为它字号更小，小字要多一点对比才读得清。 */
+  .lyric-line.active .lyric-tr {
+    color: color-mix(in srgb, var(--text) 46%, var(--ground));
+  }
+
   /* Same reasoning as .mesh-on .notes: the mesh has no fixed dark region, so
      a pale pool can drift under the words at any moment. A shadow keeps them
      readable without darkening the background the mesh exists to show.
