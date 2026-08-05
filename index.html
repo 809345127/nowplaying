@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#08080B">
-<title>Now Playing</title>
+<title>石泽在听什么</title>
 <!-- Inline so the page stays a single self-contained file with no second request. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E">
 <style>
@@ -830,6 +830,7 @@
     var s = document.getElementById('status-text');
     if (!s || s.textContent !== '连接中') return; // 它自己已经说过话了
     s.textContent = '没能启动';
+    document.title = '没能启动 · 石泽在听什么';
     var title = document.getElementById('title');
     if (title) title.textContent = '这个页面没跑起来';
     var artist = document.getElementById('artist');
@@ -1838,12 +1839,27 @@ var Mesh = (function () {
   }
 
   // 换歌时做一次淡出淡入；只是刷新时间戳就原地更新，避免整页闪一下。
+  // 标题跟画面说同一件事，用词也跟画面里那几个字保持一致，免得两处对不上。
+  function setTitle(d) {
+    var t;
+    if (d && d.title) t = (d.state === 'paused' ? '⏸ ' : '♪ ') + d.title + ' — ' + d.artist;
+    else if (d && d.unreachable) t = '连不上 · 石泽在听什么';
+    else if (d && d.offline) t = '离线 · 石泽在听什么';
+    else t = '石泽在听什么';
+    if (document.title !== t) document.title = t;
+  }
+
   function render(d) {
     var key = d && d.title ? d.state + '|' + d.artist + '|' + d.title
             : d && d.unreachable ? 'unreachable'
             : d && d.offline ? 'offline' : 'idle';
     var isNew = key !== shownKey;
     shownKey = key;
+
+    // 标签页标题跟着一起变。开一排标签的时候，那一小条字往往是这页唯一
+    // 露在外面的部分——写死一句"Now Playing"等于什么都没说，而放歌名的话，
+    // 不用切过来就知道在放什么、或者这页是不是又不动了。
+    setTitle(d);
 
     var paint = function () {
       if (!d || !d.title) {
