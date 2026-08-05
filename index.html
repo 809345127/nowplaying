@@ -552,7 +552,10 @@
     right: 0;
     top: 0;
     will-change: transform;
-    transition: transform .5s cubic-bezier(.22, .61, .36, 1);
+    /* 曲线末尾越过 1 再收回来，整栏停下时带一下极轻的回弹——像被推过去
+       之后自己坐定，而不是被拖到位就硬停。幅度压得很小：歌词是拿来读的，
+       晃一下就从"有质感"变成"看不清"。 */
+    transition: transform .66s cubic-bezier(.22, .98, .28, 1.03);
   }
 
   /* --d is how many lines away from the one being sung this is, written by
@@ -570,28 +573,52 @@
      lyrics to mush. */
   .lyric-line {
     --d: 5;
+    --sd: 0;
     margin: 0;
-    padding: .56em 0;
+    /* 右边这道空当是给放大让位的。当前那句会横向撑到 106%，而这一栏是裁切
+       不是滚动——不留的话，顶满宽度的长句放大后最后几个字母正好被切在边上。
+       百分比略大于 1 - 1/1.06，留一点余量；跟着放大值走，改一个要改另一个。 */
+    padding: .56em 6% .56em 0;
     font-size: clamp(1.08rem, 2.3vw, 1.72rem);
     font-weight: 700;
     line-height: 1.34;
     letter-spacing: -.005em;
     color: var(--text);
-    opacity: calc(.66 - var(--d) * .095);
-    filter: blur(calc(var(--d) * .072em));
-    transition: opacity .5s ease, filter .5s ease, transform .5s ease;
+    opacity: calc(.58 - var(--d) * .088);
+    /* 离得越远收得越小。配上虚化，这一栏字就有了往后退的纵深——当前那句
+       是从这个斜面上鼓出来的，而不是一列平字里被点亮的一行。
+       用 scale 而不是改字号：改字号会让下面每一行重新排版，而滚动用的
+       每行位置是提前量好的，一重排就全偏。 */
+    transform: scale(calc(1 - var(--d) * .013));
+    transform-origin: left center;
+    filter: blur(calc(var(--d) * .08em)) drop-shadow(0 0 0 transparent);
+    /* --sd 是"排在当前句后面第几行"，由 setActive 写进来。乘出来的这点
+       延迟让换行时下面的行依次跟上，而不是整栏齐刷刷地变——滚动时那道
+       波浪就是这么来的。当前句自己是 0，永远第一个动。
+       transform 用的曲线末端越过 1：那一句是"弹"出来的，不是"推"出来的。 */
+    transition:
+      opacity .5s ease calc(var(--sd) * 30ms),
+      filter .5s ease calc(var(--sd) * 30ms),
+      transform .58s cubic-bezier(.32, 1.34, .5, 1) calc(var(--sd) * 30ms);
     overflow-wrap: anywhere;
   }
   /* Sung lines recede a little further than upcoming ones — the eye should
      be pulled forward, not back. */
-  .lyric-line.past { opacity: calc(.52 - var(--d) * .085); }
+  .lyric-line.past { opacity: calc(.46 - var(--d) * .08); }
   .lyric-line.active {
     opacity: 1;
-    filter: none;                 /* not blur(0): that still forces a raster pass */
-    /* Scaled rather than sized: a font-size change would reflow every line
-       below it, and the scroll offsets were measured before that. */
-    transform: scale(1.04);
-    transform-origin: left center;
+    transform: scale(1.06);
+    /* 唱到的字自己发一点光。用 drop-shadow 而不是 text-shadow：前者照的是
+       这一行最终画出来的样子——也就是被逐字渐变裁过之后的结果，所以已经
+       唱过的那半才有光晕，还没唱到的那半是暗的、照不出什么东西来。
+       text-shadow 做不到这件事，它照的是字的轮廓，整行会一起亮，逐字点亮
+       的层次就没了。
+       写成 blur(0) 是为了跟上一条的滤镜列表逐项对齐——个数和顺序一致，
+       浏览器才肯在两者之间做过渡；只写 drop-shadow 一项就对不上了，
+       虚化会从"化开"变成"跳一下"。 */
+    filter: blur(0) drop-shadow(0 0 14px color-mix(in srgb, var(--text) 30%, transparent));
+    /* 当前句不排队。别的行等它先动完再依次跟上，它自己是这一波的起点。 */
+    transition-delay: 0s;
   }
   /* Past the window's edge the mask has already taken these to nothing, so
      blurring them is work nobody sees — and a song is fifty lines of it. */
@@ -619,11 +646,14 @@
      half-transparent one lets that shadow show through its own strokes, and
      the un-sung words come out looking grubby, white with black in them
      rather than simply dimmer. Mixing toward the page colour instead of
-     toward transparent gives the same dimming with nothing behind to leak. */
+     toward transparent gives the same dimming with nothing behind to leak.
+
+     未唱那半压到四成：这条边界是当前行内部唯一的进度指示，两边差得越开，
+     "唱到哪儿了"越是一眼可见，不用盯着找。 */
   .lyric-line.active .lyric-w {
     background-image: linear-gradient(90deg,
       var(--text) 0 var(--p, 0%),
-      color-mix(in srgb, var(--text) 52%, var(--ground)) var(--p, 0%) 100%);
+      color-mix(in srgb, var(--text) 40%, var(--ground)) var(--p, 0%) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -678,8 +708,8 @@
     background-clip: border-box;
     color: var(--text);
   }
-  /* 放大是卡拉OK的另一半：当前行不该再有舞台感，看得出是它就够了。 */
-  .np.previewing .lyric-line.active { transform: none; }
+  /* 放大和发光是卡拉OK的另一半：当前行不该再有舞台感，看得出是它就够了。 */
+  .np.previewing .lyric-line.active { transform: none; filter: none; }
 
   /* 整栏退到背景。词还在跟着石泽走（那是诚实的），只是不再是主角。 */
   .np.previewing .lyrics { opacity: .5; }
@@ -1436,6 +1466,7 @@ var Mesh = (function () {
     var FRAME_MS = 1000 / 30;     // 逐字点亮，30 帧足够顺，再高看不出来
     var CENTER = 0.42;            // 当前句停在窗口偏上一点，给下一句留出预读空间
     var FAR = 5;                  // 超过这么远就已经在窗口外了，不再花代价去虚化
+    var STAGGER_MAX = 6;          // 波浪最多往下传这么多行，再远的延迟只剩滞后感
 
     var data = null;
     var lineEls = [], wordEls = [], centers = [];
@@ -1522,12 +1553,21 @@ var Mesh = (function () {
         var d = Math.abs(i - (idx < 0 ? 0 : idx));
         if (d > FAR) d = FAR;
 
+        // 排在当前句后面第几行。往下的行依次晚一点动，换句时就是一道从
+        // 当前句往下推的波浪，而不是整栏同时变。上面的行不排队——它们正在
+        // 退场，早点让开更干净。封顶是因为再远的行已经在窗口外，让延迟
+        // 一路累下去只会让波浪拖成半秒的滞后。
+        var sd = idx < 0 ? 0 : i - idx;
+        if (sd < 0) sd = 0;
+        if (sd > STAGGER_MAX) sd = STAGGER_MAX;
+
         var cls = 'lyric-line';
         if (i === idx) cls += ' active';
         else if (idx >= 0 && i < idx) cls += ' past';
         if (d >= FAR) cls += ' far';
         if (p.className !== cls) p.className = cls;
         if (p._d !== d) { p._d = d; p.style.setProperty('--d', d); }
+        if (p._sd !== sd) { p._sd = sd; p.style.setProperty('--sd', sd); }
       }
       // 前奏还没开始唱时不要把第一句顶到中间，让它自然待在原位
       var target = idx < 0 ? 0 : centers[idx] - el.lyrics.clientHeight * CENTER;
